@@ -23,18 +23,18 @@ enum IPC {
         init?(handle: @escaping (String) -> String) {
             guard var addr = IPC.address() else { return nil }
             unlink(IPC.path)
-            fd = socket(AF_UNIX, SOCK_STREAM, 0)
+            let listener = socket(AF_UNIX, SOCK_STREAM, 0)
+            fd = listener
             let bound = withUnsafePointer(to: &addr) {
-                $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size)) }
+                $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(listener, $0, socklen_t(MemoryLayout<sockaddr_un>.size)) }
             }
-            guard fd >= 0, bound == 0, listen(fd, 8) == 0 else {
-                close(fd)
+            guard listener >= 0, bound == 0, listen(listener, 8) == 0 else {
+                close(listener)
                 return nil
             }
-            let fd = fd
             Thread.detachNewThread {
                 while true {
-                    let client = accept(fd, nil, nil)
+                    let client = accept(listener, nil, nil)
                     guard client >= 0 else { return }
                     var on: Int32 = 1
                     setsockopt(client, SOL_SOCKET, SO_NOSIGPIPE, &on, socklen_t(MemoryLayout<Int32>.size))
