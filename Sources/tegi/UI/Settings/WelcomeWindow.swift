@@ -55,6 +55,9 @@ final class WelcomeWindow {
         window.titleVisibility = .hidden
         window.isReleasedWhenClosed = false
         window.isMovableByWindowBackground = true
+        // It can't be minimized or resized, so their greyed-out buttons would only look broken.
+        window.standardWindowButton(.miniaturizeButton)?.isHidden = true
+        window.standardWindowButton(.zoomButton)?.isHidden = true
         window.contentViewController = NSHostingController(rootView: WelcomeView(permissions: permissions, done: { [weak self] in
             self?.close()
         }, restart: { [weak self] in self?.onRestart() }))
