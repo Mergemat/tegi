@@ -156,14 +156,9 @@ private final class SwitcherPanel: NSPanel {
         let width = sizes.reduce(0) { $0 + $1.width } + chrome
         let height = (sizes.map(\.height).max() ?? 0) + SwitcherView.pad * 2 + SwitcherView.label + (model.mascot ? SwitcherView.peek : 0)
         setFrame(CGRect(x: (visible.midX - width / 2).rounded(), y: (visible.midY - height / 2).rounded(), width: width, height: height), display: false)
-        let first = model.items.isEmpty
         model.items = items
         model.sizes = sizes
-        if first {
-            model.selected = selected
-        } else {
-            withAnimation(.spring(duration: 0.3, bounce: 0.2)) { model.selected = selected }
-        }
+        model.selected = selected
         if !isVisible { orderFrontRegardless() }
     }
 }
@@ -183,12 +178,11 @@ private final class SwitcherModel: ObservableObject {
     }
 }
 
-/// The recent windows on a plain frosted strip: one focus ring glides between them, with the mascot riding on it.
+/// The recent windows on a plain frosted strip, the picked one in the focus ring. Stepping is instant, like ⌘Tab.
 private struct SwitcherView: View {
     static let pad = 16.0, spacing = 14.0, label = 30.0, peek = 18.0
     @ObservedObject var model: SwitcherModel
     @Namespace private var tiles
-    @State private var shown = false
 
     var body: some View {
         let picked = model.items.indices.contains(model.selected) ? model.items[model.selected] : nil
@@ -220,9 +214,6 @@ private struct SwitcherView: View {
             .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
             .padding(.top, model.mascot ? Self.peek : 0)
         }
-        .scaleEffect(shown ? 1 : 0.97)
-        .opacity(shown ? 1 : 0)
-        .onAppear { withAnimation(.easeOut(duration: 0.14)) { shown = true } }
     }
 
     // Above the middle of the picked window, so the mascot moves along with the ring.

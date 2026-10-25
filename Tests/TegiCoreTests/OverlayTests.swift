@@ -10,13 +10,13 @@ import Testing
 }
 
 @Test func theSwitcherCanShowIconsFromOneWorkspaceAtOnce() throws {
-    let c = try Config.parse("switcher-shows icons\nswitcher-windows workspace\nswitcher-delay 0\nswitcher-mascot off")
+    let c = try Config.parse("switcher-shows icons\nswitcher-windows workspace\nswitcher-delay 0\nswitcher-mascot on")
     #expect(c.switcherShows == .icons)
     #expect(c.switcherWindows == .workspace)
     #expect(c.switcherDelay == 0)
-    #expect(!c.switcherMascot)
+    #expect(c.switcherMascot)
     #expect(Config.builtIn.switcherShows == .pictures && Config.builtIn.switcherWindows == .everywhere)
-    #expect(Config.builtIn.switcherDelay == 0.15 && Config.builtIn.switcherMascot)
+    #expect(Config.builtIn.switcherDelay == 0.15 && !Config.builtIn.switcherMascot)
 }
 
 @Test func theCheatSheetCanShowEveryLaunchOrNever() throws {

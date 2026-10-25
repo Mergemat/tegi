@@ -162,7 +162,7 @@ public struct Config: Equatable {
     public var switcherWindows = SwitcherWindows.everywhere
     /// Seconds ⌥Tab is held before the switcher shows, so a quick tap switches without it flashing.
     public var switcherDelay = 0.15
-    public var switcherMascot = true
+    public var switcherMascot = false
     public var hotkeyOverlayAtStartup = AtStartup.firstTime
     public var threeFingerSwipe = true
     public var focusFollowsMouse: Double?
@@ -585,7 +585,7 @@ public struct Config: Equatable {
     switcher-shows pictures
     switcher-windows everywhere
     switcher-delay 0.15
-    switcher-mascot on
+    switcher-mascot off
 
     # The hotkey cheat sheet at startup: first-time, always or never.
     hotkey-overlay-at-startup first-time
