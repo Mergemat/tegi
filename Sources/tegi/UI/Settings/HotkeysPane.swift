@@ -83,6 +83,7 @@ struct HotkeysPane: View {
     @State private var monitor: Any?
     @State private var numbers = false
     @State private var more: Set<HotkeyGroup> = []
+    @State private var lit: Command?
 
     struct Recording: Equatable {
         var command: Command
@@ -142,9 +143,8 @@ struct HotkeysPane: View {
         } else {
             CardTitle("Getting around")
             Card {
-                Compass(left: keys(.focusColumnLeft).first, right: keys(.focusColumnRight).first,
-                        up: keys(.focusWindowUp).first, down: keys(.focusWindowDown).first, take: Mods.shift.under(mod))
-                    .padding(.vertical, Space.card)
+                AroundMap(key: { keys($0).first }, lit: lit, take: Mods.shift.under(mod))
+                    .padding(Space.card)
                 Rectangle().fill(t.divider).frame(height: 1)
                 pairHeader
                 ForEach(Array(Pair.around.enumerated()), id: \.offset) { _, pair in pairRow(pair) }
@@ -227,6 +227,10 @@ struct HotkeysPane: View {
             shortcuts(pair.go).frame(width: Self.column, alignment: .leading)
             shortcuts(pair.take).frame(width: Self.column, alignment: .leading)
             SwiftUI.Color.clear.frame(width: Self.chevron, height: 1)
+        }
+        .contentShape(Rectangle())
+        .onHover { inside in
+            withAnimation(.spring(duration: 0.25)) { lit = inside ? pair.go : (lit == pair.go ? nil : lit) }
         }
     }
 
@@ -329,34 +333,80 @@ struct HotkeysPane: View {
     }
 }
 
-/// The focused window among its neighbours, with the keys that reach each one.
-private struct Compass: View {
-    let left, right, up, down: KeyCombo?
+/// The focused window in its strip, with every place the table can take you and the key that gets there.
+private struct AroundMap: View {
+    @Environment(\.colorScheme) private var scheme
+    let key: (Command) -> KeyCombo?
+    let lit: Command?
     let take: Mods
 
     var body: some View {
+        let t = Theme(scheme)
         VStack(spacing: 12) {
-            HStack(spacing: 10) {
-                cap(left, "arrow.left")
-                Friend(radius: 7).frame(width: 34, height: 58).opacity(0.7)
+            VStack(spacing: 8) {
+            peek(.focusWorkspaceUp)
+            HStack(spacing: 8) {
+                place(.focusColumnFirst, width: 42)
+                dots
+                place(.focusColumnLeft, width: 48)
                 VStack(spacing: 6) {
-                    cap(up, "arrow.up")
-                    Mascot(ringWidth: 2.5, radius: 8).frame(width: 46, height: 56)
-                    cap(down, "arrow.down")
+                    place(.focusWindowUp, width: 60, height: 34)
+                    Mascot(ringWidth: 2.5, radius: 9).frame(width: 60, height: 62)
+                    place(.focusWindowDown, width: 60, height: 34)
                 }
-                Friend(radius: 7).frame(width: 34, height: 58).opacity(0.7)
-                cap(right, "arrow.right")
+                place(.focusColumnRight, width: 48)
+                dots
+                place(.focusColumnLast, width: 42)
             }
-            SceneCaption("Add \(take == .shift ? "⇧" : take.symbol) and the window comes along")
+            .frame(height: 146)
+            .padding(10)
+            .background(t.chip, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            peek(.focusWorkspaceDown)
+            }
+            // As wide as the strip, so the workspaces above and below line up with it.
+            .fixedSize(horizontal: true, vertical: false)
+            SceneCaption("Add \(take == .shift ? "⇧" : take.symbol) to any of these and the window comes along")
         }
         .frame(maxWidth: .infinity)
     }
 
-    @ViewBuilder private func cap(_ combo: KeyCombo?, _ arrow: String) -> some View {
-        if let combo {
-            KeyCap(text: combo.symbol)
-        } else {
-            Image(systemName: arrow).font(.system(size: 11, weight: .bold)).foregroundStyle(tegiBlue).frame(width: 28, height: 26)
+    private var dots: some View {
+        Text("···").font(.system(size: 14, weight: .heavy, design: .rounded)).foregroundStyle(Theme(scheme).faint)
+    }
+
+    private func place(_ command: Command, width: CGFloat, height: CGFloat? = nil) -> some View {
+        let on = lit == command
+        return ZStack {
+            Friend(radius: 8, face: (height ?? 99) > 40)
+                .opacity(lit == nil || on ? 1 : 0.45)
+                .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(on ? tegiBlue : .clear, lineWidth: 2.5))
+                .shadow(color: on ? tegiBlue.opacity(0.6) : .clear, radius: 8)
+            if let combo = key(command) {
+                KeyCap(text: combo.symbol).scaleEffect(on ? 1.1 : 1)
+                    .frame(maxHeight: .infinity, alignment: height == nil ? .bottom : .center)
+                    .padding(.bottom, height == nil ? 8 : 0)
+            }
+        }
+        .frame(width: width, height: height)
+    }
+
+    private func peek(_ command: Command) -> some View {
+        let t = Theme(scheme), on = lit == command
+        return ZStack {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(t.chip)
+                .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(on ? tegiBlue : .clear, lineWidth: 2))
+                .shadow(color: on ? tegiBlue.opacity(0.5) : .clear, radius: 8)
+                .frame(maxWidth: .infinity)
+                .frame(height: 30)
+            if let combo = key(command) {
+                HStack(spacing: 6) {
+                    KeyCap(text: combo.symbol)
+                    Text(command == .focusWorkspaceUp ? "workspace above" : "workspace below")
+                        .font(.system(size: 11, weight: .semibold, design: .rounded)).foregroundStyle(t.secondary)
+                }
+                .scaleEffect(on ? 1.06 : 1)
+            }
         }
     }
 }
