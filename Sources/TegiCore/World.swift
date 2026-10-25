@@ -118,8 +118,14 @@ public struct World: Equatable {
         var column = Column(id, width: .proportion(rule.width ?? config.defaultColumnWidth), fullWidth: rule.maximized == true)
         column.tabbed = config.defaultColumnDisplayTabbed
         if monitors[m].workspaces[w].name == nil { monitors[m].workspaces[w].home = monitors[m].id }
-        let empty = monitors[m].workspaces[w].isEmpty
-        monitors[m].workspaces[w].addColumn(column, activate: empty || shown && rule.focused != false, g)
+        let ws = monitors[m].workspaces[w]
+        let at = switch config.newWindowPosition {
+        case .right: ws.active + 1
+        case .left: ws.active
+        case .start: 0
+        case .end: ws.columns.count
+        }
+        monitors[m].workspaces[w].addColumn(column, at: ws.isEmpty ? 0 : at, activate: ws.isEmpty || shown && rule.focused != false, g)
         normalize(m)
     }
 

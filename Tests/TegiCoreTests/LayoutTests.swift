@@ -530,3 +530,17 @@ private struct SplitMix {
         #expect(w.layout(config: c) == before)
     }
 }
+
+@Test func newWindowsOpenWhereYouSay() throws {
+    let order: [NewWindowPosition: [WindowID]] = [.right: [1, 2, 4, 3], .left: [1, 4, 2, 3], .start: [4, 1, 2, 3], .end: [1, 2, 3, 4]]
+    for (position, expected) in order {
+        var w = world([1, 2, 3], config: config())
+        w.perform(.focusColumnLeft, config: config())
+        w.insert(4, config: config { $0.newWindowPosition = position })
+        let ws = w.monitors[0].workspaces[w.monitors[0].active]
+        #expect(ws.columns.map(\.activeWindow) == expected, "\(position)")
+        #expect(ws.activeWindow == 4, "\(position) focuses the new window")
+    }
+    #expect(try Config.parse("new-window-position end").newWindowPosition == .end)
+    #expect(Config.builtIn.newWindowPosition == .right)
+}

@@ -114,6 +114,9 @@ public enum Corner: String, CaseIterable {
     case topLeft = "top-left", topRight = "top-right", bottomLeft = "bottom-left", bottomRight = "bottom-right"
 }
 
+/// Where a new window's column goes: beside the focused one, or at either end of the strip.
+public enum NewWindowPosition: String, CaseIterable { case right, left, start, end }
+
 public enum OverviewBackdrop: String, CaseIterable { case wallpaper, color }
 public enum SwitcherShows: String, CaseIterable { case pictures, icons, both }
 public enum SwitcherWindows: String, CaseIterable { case everywhere, display, workspace }
@@ -179,6 +182,7 @@ public struct Config: Equatable {
     public var rules: [WindowRule] = []
     public var workspaces: [NamedWorkspace] = []
     public var defaultColumnDisplayTabbed = false
+    public var newWindowPosition = NewWindowPosition.right
     public var emptyWorkspaceAboveFirst = false
     public var startup: [Command] = []
 
@@ -298,6 +302,9 @@ public struct Config: Equatable {
                 } else {
                     config.windowCornerRadius = try number(0...40, "window-corner-radius is auto or between 0 and 40 points")
                 }
+            case "new-window-position":
+                guard let v = NewWindowPosition(rawValue: try one()) else { throw fail("new-window-position is right, left, start or end") }
+                config.newWindowPosition = v
             case "default-column-width":
                 config.defaultColumnWidth = try fraction(try one())
             case "preset-column-widths":
@@ -535,6 +542,10 @@ public struct Config: Equatable {
 
     # Width of a new column, as a fraction of the screen.
     default-column-width 0.5
+
+    # Where a new window opens: right or left of the focused one, or at the
+    # start or end of the strip.
+    new-window-position right
 
     # Space kept clear along the edges of every display, in points:
     # left, right, top, bottom.

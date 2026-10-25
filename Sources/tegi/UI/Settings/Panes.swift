@@ -62,6 +62,13 @@ struct LayoutPane: View {
                       format: points, live: { $0.gap = $1 })
             SliderRow(title: "New column width", detail: "How wide a window opens.", key: ["default-column-width"],
                       value: c.defaultColumnWidth, range: 0.2...1, step: 0.05, format: percent, live: { $0.defaultColumnWidth = $1 })
+            Row(title: "New windows open", stacked: true) {
+                VStack(alignment: .leading, spacing: 10) {
+                    NewWindowArt(position: c.newWindowPosition)
+                    Choice(options: [("Right of the focused one", NewWindowPosition.right), ("Left of it", .left), ("At the start", .start), ("At the end", .end)],
+                           selected: c.newWindowPosition) { model.set(["new-window-position"], [$0.rawValue]) }
+                }
+            }
             Row(title: "New columns show windows", last: true) {
                 Choice(options: [("Stacked", false), ("As tabs", true)], selected: c.defaultColumnDisplayTabbed) {
                     model.set(["default-column-display"], [$0 ? "tabbed" : "normal"])
@@ -194,6 +201,38 @@ struct PointsField: View {
         .padding(.horizontal, 12).padding(.vertical, 6)
         .frame(width: 76)
         .background(t.chip, in: Capsule())
+    }
+}
+
+/// A strip with the focused window in it, and a dashed new window where the setting would put it.
+struct NewWindowArt: View {
+    let position: NewWindowPosition
+    private enum Tile: Hashable { case other(Int), focused, new }
+
+    var body: some View {
+        var strip: [Tile] = [.other(0), .other(1), .focused, .other(2)]
+        let at = switch position {
+        case .start: 0
+        case .left: 2
+        case .right: 3
+        case .end: strip.count
+        }
+        strip.insert(.new, at: at)
+        return HStack(spacing: 5) {
+            ForEach(strip, id: \.self) { tile in
+                switch tile {
+                case .new:
+                    RoundedRectangle(cornerRadius: 5, style: .continuous)
+                        .strokeBorder(tegiBlue, style: StrokeStyle(lineWidth: 1.5, dash: [3, 2]))
+                        .background(tegiBlue.opacity(0.15), in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+                        .overlay(Image(systemName: "plus").font(.system(size: 9, weight: .bold)).foregroundStyle(tegiBlue))
+                        .frame(width: 26, height: 34)
+                case .focused: Mascot(ringWidth: 1.5, radius: 5).frame(width: 26, height: 34)
+                case .other: Friend(radius: 5, face: false).frame(width: 26, height: 34).opacity(0.7)
+                }
+            }
+        }
+        .animation(.spring(duration: 0.3, bounce: 0.25), value: position)
     }
 }
 
