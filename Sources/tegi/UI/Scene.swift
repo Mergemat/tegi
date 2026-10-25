@@ -89,6 +89,7 @@ final class Scene: NSObject {
         backdrop.contents = backdropImage(wallpaper)
         // Workspaces are inserted by index from the bottom, so the backdrop keeps behind them by depth, not order.
         backdrop.zPosition = -1
+        backdrop.opacity = 0.88
         root.addSublayer(backdrop)
         host.addSublayer(root)
         panel.contentView = view
@@ -133,8 +134,9 @@ final class Scene: NSObject {
             return nil
         }
         let small = image.transformed(by: CGAffineTransform(scaleX: 0.25, y: 0.25))
-        let soft = small.clampedToExtent().applyingGaussianBlur(sigma: 18).cropped(to: small.extent)
-            .applyingFilter("CIColorControls", parameters: [kCIInputBrightnessKey: -0.08, kCIInputSaturationKey: 1.1])
+        // Blurred until only the wallpaper's colours remain; darkening here crushes them to black, so the backdrop color tints instead.
+        let soft = small.clampedToExtent().applyingGaussianBlur(sigma: 60).cropped(to: small.extent)
+            .applyingFilter("CIColorControls", parameters: [kCIInputSaturationKey: 0.9])
         return Self.blur.createCGImage(soft, from: small.extent)
     }
 
