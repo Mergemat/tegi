@@ -47,6 +47,7 @@ final class WindowManager {
     var refusals: [WindowID: Refusal] = [:]
     var drift: [WindowID: Drift] = [:]
     var strays: [WindowID: DispatchWorkItem] = [:]
+    var handoffs = 0
     var generation: [WindowID: Int] = [:]
     var unlanded: Set<WindowID> = []
     var hideWhenLanded: Set<UInt32> = []
@@ -185,6 +186,22 @@ final class WindowManager {
         }
         let before = world.focusedWindow
         world.perform(command, config: config)
+        let leaving = before.flatMap { wins[$0]?.worker }, arriving = world.focusedWindow.flatMap { wins[$0]?.worker }
+        if world.focusedWindow != before, !overview, let leaving, let arriving, leaving !== arriving {
+            // An app losing focus is often busy for a moment, and windows it can't move then lurch mid-motion.
+            // So focus goes first, and the motion starts once that app answers again, or after a beat at most.
+            handoffs += 1
+            let mine = handoffs
+            var moved = false
+            let go = { [weak self] in
+                guard let self, !moved, handoffs == mine else { return }
+                moved = true
+                relayout(measuringFrom: start)
+            }
+            focusModel(layout: false) { leaving.whenAnswering(go) }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.08, execute: go)
+            return
+        }
         relayout(measuringFrom: start)
         if world.focusedWindow != before && !overview { focusModel() }
     }
@@ -597,7 +614,7 @@ final class WindowManager {
         focusModel()
     }
 
-    func focusModel() {
+    func focusModel(layout: Bool = true, then: (() -> Void)? = nil) {
         guard let id = world.focusedWindow, let win = wins[id] else {
             if let floater = floatersShowing(on: world.focusedMonitor).first { return focusWindow(floater) }
             focused = nil
@@ -612,8 +629,8 @@ final class WindowManager {
         focused = id
         expectFocus(id)
         recent.focused(id)
-        win.worker.focus(win.element)
-        relayout()
+        win.worker.focus(win.element, then: then)
+        if layout { relayout() }
         warpPointer(to: id)
     }
 

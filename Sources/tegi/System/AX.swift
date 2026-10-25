@@ -98,6 +98,7 @@ final class AppWorker {
     private let lock = NSLock()
     private var pending: [WindowID: Job] = [:]
 
+
     private struct Job {
         var window: AXUIElement
         var frame: CGRect
@@ -235,11 +236,20 @@ final class AppWorker {
         if more { queue.async { [self] in self.drain() } }
     }
 
-    func focus(_ window: AXUIElement) {
+    func focus(_ window: AXUIElement, then: (() -> Void)? = nil) {
         queue.async { [self] in
             app.set(kAXFrontmostAttribute, kCFBooleanTrue)
             window.set(kAXMainAttribute, kCFBooleanTrue)
             AXUIElementPerformAction(window, kAXRaiseAction as CFString)
+            if let then { DispatchQueue.main.async(execute: then) }
+        }
+    }
+
+    /// Calls back on the main thread once this app answers an Accessibility request, which it can't while busy.
+    func whenAnswering(_ then: @escaping () -> Void) {
+        queue.async { [self] in
+            _ = app.value(kAXFocusedWindowAttribute)
+            DispatchQueue.main.async(execute: then)
         }
     }
 
