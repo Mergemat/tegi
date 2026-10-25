@@ -87,6 +87,8 @@ final class Scene: NSObject {
         backdrop.frame = wallpaperFrame
         backdrop.contentsGravity = .resizeAspectFill
         backdrop.contents = backdropImage(wallpaper)
+        // Workspaces are inserted by index from the bottom, so the backdrop keeps behind them by depth, not order.
+        backdrop.zPosition = -1
         root.addSublayer(backdrop)
         host.addSublayer(root)
         panel.contentView = view
