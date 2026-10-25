@@ -264,14 +264,6 @@ final class AppWorker {
         }
     }
 
-    /// Calls back on the main thread once this app answers an Accessibility request, which it can't while busy.
-    func whenAnswering(_ then: @escaping () -> Void) {
-        queue.async { [self] in
-            _ = app.value(kAXFocusedWindowAttribute)
-            DispatchQueue.main.async(execute: then)
-        }
-    }
-
     func close(_ window: AXUIElement) {
         queue.async {
             guard let button = window.value(kAXCloseButtonAttribute) else { return }

@@ -47,9 +47,7 @@ final class WindowManager {
     var refusals: [WindowID: Refusal] = [:]
     var drift: [WindowID: Drift] = [:]
     var strays: [WindowID: DispatchWorkItem] = [:]
-    var handoffs = 0
-    var handingOff = false
-    var settling: DispatchWorkItem?
+    var activating: (id: WindowID, since: CFTimeInterval)?
     var lastFocusMove = 0.0
     var leftBehind: Set<WindowID> = []
 
@@ -197,53 +195,9 @@ final class WindowManager {
         }
         let before = world.focusedWindow
         world.perform(command, config: config)
-        let leaving = before.flatMap { wins[$0]?.worker }
-        let changed = world.focusedWindow != before && !overview
-        // In a burst of presses the strip follows each one at once, and only where focus ends up gets activated: each
-        // activation blocks that app's moves for tens of milliseconds. A press to a column already in view moves nothing,
-        // so a press soon after the last counts too.
-        let now = CACurrentMediaTime()
-        let underway = motion.isMoving || handingOff || now - lastFocusMove < 0.3
-        if changed { lastFocusMove = now }
-        if changed, !underway, let id = world.focusedWindow, wins[id] != nil {
-            // Activating an app keeps it busy for tens of milliseconds, and its windows can't move until it's done; the
-            // app losing focus is briefly busy too. So focus goes first and the whole strip sets off together once both
-            // have answered, instead of their windows starting late and the strip tearing apart. A hung app can't hold it up.
-            handoffs += 1
-            handingOff = true
-            let mine = handoffs
-            let go = { [weak self] in
-                guard let self, handingOff, handoffs == mine else { return }
-                handingOff = false
-                relayout(measuringFrom: start)
-            }
-            focusModel(layout: false) {
-                if let leaving, leaving !== self.wins[id]?.worker { leaving.whenAnswering(go) } else { go() }
-            }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: go)
-            return
-        }
-        handingOff = false
+        if world.focusedWindow != before && !overview { lastFocusMove = CACurrentMediaTime() }
         relayout(measuringFrom: start)
-        if changed { underway ? focusSoon() : focusModel() }
-    }
-
-    /// Focus as far as tegi is concerned now, and for the app once the presses stop and the strip comes to rest. An app
-    /// that gains focus and loses it a moment later can stall the screen, so it isn't activated on the way past; and the
-    /// app losing focus stalls its windows for tens of milliseconds, which mid-slide shows as a jolt.
-    func focusSoon(after delay: Double = 0.15) {
-        guard let id = world.focusedWindow, wins[id] != nil else { return focusModel() }
-        focused = id
-        expectFocus(id)
-        recent.focused(id)
-        settling?.cancel()
-        let work = DispatchWorkItem { [weak self] in
-            guard let self else { return }
-            if motion.isMoving { return focusSoon(after: 1.0 / 60) }
-            focusModel(layout: false)
-        }
-        settling = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+        if world.focusedWindow != before && !overview { focusModel(layout: false) }
     }
 
     /// What `open -b` does, without its process and LaunchServices round trip: a window tegi already holds is focused at once.
@@ -678,7 +632,7 @@ final class WindowManager {
         focusModel()
     }
 
-    func focusModel(layout: Bool = true, then: (() -> Void)? = nil) {
+    func focusModel(layout: Bool = true) {
         guard let id = world.focusedWindow, let win = wins[id] else {
             if let floater = floatersShowing(on: world.focusedMonitor).first { return focusWindow(floater) }
             focused = nil
@@ -690,13 +644,25 @@ final class WindowManager {
             relayout()
             return
         }
-        settling?.cancel()
         focused = id
         expectFocus(id)
         recent.focused(id)
-        win.worker.focus(win.element, then: then)
+        activate(win)
         if layout { relayout() }
         warpPointer(to: id)
+    }
+
+    /// One activation at a time: an app takes tens of milliseconds to come forward, so with keys held down the next one
+    /// goes straight to wherever focus is by then instead of working through a backlog. A hung app holds it up briefly.
+    func activate(_ win: Win) {
+        let now = CACurrentMediaTime()
+        if let a = activating, now - a.since < 0.25 { return }
+        activating = (win.id, now)
+        win.worker.focus(win.element) { [weak self] in
+            guard let self else { return }
+            activating = nil
+            if let id = focused, id != win.id, let next = wins[id], !next.floating { activate(next) }
+        }
     }
 
     func expectFocus(_ id: WindowID?) {
