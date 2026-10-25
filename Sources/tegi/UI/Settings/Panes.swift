@@ -301,10 +301,54 @@ struct LooksPane: View {
 
         CardTitle("Overview")
         Card {
+            OverviewScene(zoom: c.overviewZoom, backdrop: SwiftUI.Color(c.backdropColor))
+                .animation(.spring(duration: 0.35, bounce: 0.2), value: c.overviewZoom)
+                .frame(maxWidth: .infinity)
+                .padding(.top, Space.card)
             SliderRow(title: "Zoom", detail: "How small workspaces get.", key: ["overview-zoom"], value: c.overviewZoom,
                       range: 0.25...0.75, step: 0.05, format: percent, live: { $0.overviewZoom = $1 })
             ColorRow(title: "Backdrop", key: ["backdrop-color"], color: c.backdropColor, last: true) { $0.backdropColor = $1 }
         }
+    }
+}
+
+/// The overview in miniature, laid out as tegi lays it out: workspaces at the zoom, the current one centred, on the backdrop.
+struct OverviewScene: View {
+    let zoom: Double
+    let backdrop: SwiftUI.Color
+    private let screen = CGSize(width: 240, height: 150)
+
+    var body: some View {
+        let step = screen.height * zoom * 1.1
+        ZStack {
+            ForEach(-2...2, id: \.self) { i in
+                MiniWorkspace(current: i == 0)
+                    .frame(width: screen.width, height: screen.height)
+                    .scaleEffect(zoom)
+                    .offset(y: Double(i) * step)
+            }
+        }
+        .frame(width: screen.width, height: screen.height)
+        .background(backdrop)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(.white.opacity(0.12)))
+        .shadow(color: .black.opacity(0.25), radius: 10, y: 4)
+    }
+}
+
+private struct MiniWorkspace: View {
+    let current: Bool
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Friend(radius: 12).frame(width: 56)
+            if current { Mascot(ringWidth: 4, radius: 13).frame(width: 84) } else { Friend(radius: 12).frame(width: 84) }
+            Friend(radius: 12).frame(width: 56)
+        }
+        .padding(.vertical, 20)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(LinearGradient(colors: [SwiftUI.Color(hex: 0x5b7cff), SwiftUI.Color(hex: 0xb18cff)], startPoint: .topLeading, endPoint: .bottomTrailing))
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 }
 
