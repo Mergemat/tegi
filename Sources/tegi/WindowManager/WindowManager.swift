@@ -43,6 +43,8 @@ final class WindowManager {
     var ids: [AXUIElement: WindowID] = [:]
     var nextID = 1
     var applied: [WindowID: CGRect] = [:]
+    /// Sizes apps kept when asked for another, so what tegi draws around a window matches it.
+    var refusals: [WindowID: Refusal] = [:]
     var generation: [WindowID: Int] = [:]
     var unlanded: Set<WindowID> = []
     var hideWhenLanded: Set<UInt32> = []
@@ -215,9 +217,9 @@ final class WindowManager {
         applyConfigToWorld()
         for win in wins.values {
             let app = win.worker.bundleID
-            let was = old.rule(app: app, title: win.title).floating ?? false
-            let now = new.rule(app: app, title: win.title).floating ?? false
-            if was != now { setFloating(win, now || !win.tileable) }
+            let was = old.rule(app: app, title: win.title).floating
+            let now = new.rule(app: app, title: win.title).floating
+            if was != now { setFloating(win, now ?? !win.tileable) }
         }
         if old.swipeModifier != new.swipeModifier || old.threeFingerSwipe != new.threeFingerSwipe { startInput() }
         world.setDisplays(displays(), config: config)
@@ -267,7 +269,7 @@ final class WindowManager {
                 frame = CGRect(x: area.minX + step, y: area.minY + step,
                                width: min(size.width, area.width * 0.7), height: min(size.height, area.height * 0.7))
             }
-            win.worker.apply(id, win.element, frame, resize: true, mismatch: { _, _ in }, done: {})
+            win.worker.apply(id, win.element, frame, resize: true, measured: { _, _ in }, done: {})
         }
         guard wait else { return }
         for worker in workers.values { worker.flush(group) }
@@ -346,8 +348,10 @@ final class WindowManager {
         let gen = (generation[id] ?? 0) + 1
         generation[id] = gen
         unlanded.insert(id)
-        win.worker.apply(id, win.element, frame, resize: resize, verify: verify, mismatch: { [weak self] id, size in
-            self?.appRefused(width: size.width, for: id)
+        win.worker.apply(id, win.element, frame, resize: resize, verify: verify, measured: { [weak self] id, size in
+            guard let self else { return }
+            refusals[id] = abs(size.height - frame.height) > 1 ? Refusal(asked: frame.size, got: size) : nil
+            if abs(size.width - frame.width) > 1 { appRefused(width: size.width, for: id) }
         }, done: { [weak self] in
             self?.placed(id, generation: gen)
         })
@@ -356,7 +360,8 @@ final class WindowManager {
     func shownFrame(_ id: WindowID, at now: CFTimeInterval) -> CGRect? {
         if let g = grab, g.window == id, !g.resize, !g.floating { return g.current }
         let p = motion.current(id, at: now).map { world.place($0.frame.roundedToPoints, on: $0.monitor) } ?? targets[id]
-        return p?.visible == true ? p?.frame : nil
+        guard p?.visible == true, let frame = p?.frame else { return nil }
+        return refusals[id]?.apply(to: frame) ?? frame
     }
 
     /// What the ring and pictures round a window's corners by: a set radius, else the window's own, else macOS's usual.
@@ -430,7 +435,7 @@ final class WindowManager {
         let id = nextID
         nextID += 1
         var rule = config.rule(app: worker.bundleID, title: info.title)
-        let win = Win(id: id, element: el, worker: worker, info: info, floating: !info.tileable || rule.floating == true)
+        let win = Win(id: id, element: el, worker: worker, info: info, floating: rule.floating ?? !info.tileable)
         wins[id] = win
         ids[el] = id
         worker.watch(el)
@@ -453,6 +458,7 @@ final class WindowManager {
         guard let win = wins.removeValue(forKey: id) else { return }
         ids[win.element] = nil
         applied[id] = nil
+        refusals[id] = nil
         verified.remove(id)
         floatHidden.remove(id)
         generation[id] = nil

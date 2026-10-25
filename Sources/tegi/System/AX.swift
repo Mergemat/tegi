@@ -103,7 +103,7 @@ final class AppWorker {
         var frame: CGRect
         var resize: Bool
         var verify: Bool
-        var mismatch: (WindowID, CGSize) -> Void
+        var measured: (WindowID, CGSize) -> Void
         var done: () -> Void
     }
     private var draining = false
@@ -192,10 +192,10 @@ final class AppWorker {
     }
 
     func apply(_ id: WindowID, _ window: AXUIElement, _ frame: CGRect, resize: Bool, verify: Bool = true,
-               mismatch: @escaping (WindowID, CGSize) -> Void, done: @escaping () -> Void) {
+               measured: @escaping (WindowID, CGSize) -> Void, done: @escaping () -> Void) {
         lock.lock()
         let resize = resize || pending[id]?.resize == true
-        pending[id] = Job(window: window, frame: frame, resize: resize, verify: verify, mismatch: mismatch, done: done)
+        pending[id] = Job(window: window, frame: frame, resize: resize, verify: verify, measured: measured, done: done)
         let start = !draining
         draining = true
         lock.unlock()
@@ -215,7 +215,7 @@ final class AppWorker {
         for (id, job) in jobs {
             let actual = job.window.setFrame(job.frame, resize: job.resize, verify: job.verify)
             DispatchQueue.main.async {
-                if let actual, abs(actual.width - job.frame.width) > 1 { job.mismatch(id, actual) }
+                if let actual { job.measured(id, actual) }
                 job.done()
             }
         }
