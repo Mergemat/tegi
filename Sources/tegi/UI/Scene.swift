@@ -157,7 +157,8 @@ final class Scene: NSObject {
         while labels.count > names.count { labels.removeLast().removeFromSuperlayer() }
         for (i, (tag, name)) in zip(labels, names).enumerated() { tag.set(number: i + 1, name: name) }
         CATransaction.commit()
-        place(at: CACurrentMediaTime())
+        // While a motion runs its next frame places the labels; placing now would show that motion a frame early.
+        if link == nil { place(at: CACurrentMediaTime()) }
     }
 
     func show(_ content: Content, at index: Double) {
