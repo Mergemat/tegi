@@ -34,7 +34,7 @@ final class Scene: NSObject {
     private let ring = CALayer()
     private let hint = CALayer()
     private let backdrop = CALayer()
-    private var labels: [CATextLayer] = []
+    private var labels: [WorkspaceTag] = []
     private var notice: CATextLayer?
     private var index: Spring
     private var zoom: Spring
@@ -144,32 +144,18 @@ final class Scene: NSObject {
     }
 
     /// The names shown in each workspace's corner while the overview is open.
-    private static let labelFont = NSFont.systemFont(ofSize: 12, weight: .semibold)
-
-    func setNames(_ names: [String]) {
+    /// The overview's workspace labels: each workspace's name, nil for one without.
+    func setNames(_ names: [String?]) {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         while labels.count < names.count {
-            let label = CATextLayer()
-            label.fontSize = Self.labelFont.pointSize
-            label.font = Self.labelFont
-            label.foregroundColor = CGColor(gray: 1, alpha: 0.8)
-            label.alignmentMode = .left
-            // A soft shadow keeps plain text readable on any wallpaper.
-            label.shadowOpacity = 0.5
-            label.shadowRadius = 3
-            label.shadowOffset = .zero
-            label.contentsScale = panel.backingScaleFactor
-            label.opacity = 0
-            root.addSublayer(label)
-            labels.append(label)
+            let tag = WorkspaceTag(scale: panel.backingScaleFactor)
+            tag.opacity = 0
+            root.addSublayer(tag)
+            labels.append(tag)
         }
         while labels.count > names.count { labels.removeLast().removeFromSuperlayer() }
-        for (label, name) in zip(labels, names) {
-            label.string = name
-            let size = (name as NSString).size(withAttributes: [.font: Self.labelFont])
-            label.bounds = CGRect(x: 0, y: 0, width: ceil(size.width) + 2, height: ceil(size.height))
-        }
+        for (i, (tag, name)) in zip(labels, names).enumerated() { tag.set(number: i + 1, name: name) }
         CATransaction.commit()
         place(at: CACurrentMediaTime())
     }
@@ -437,10 +423,11 @@ final class Scene: NSObject {
                 ws.shadow.shadowPath = CGPath(roundedRect: ws.container.bounds, cornerWidth: radius, cornerHeight: radius, transform: nil)
             }
             if labels.indices.contains(i) {
-                let label = labels[i]
+                let tag = labels[i]
                 // Above the workspace, in the gap, so it never covers a window.
-                label.position = CGPoint(x: x + label.bounds.width / 2, y: size.height - y + 5 + label.bounds.height / 2)
-                label.opacity = config.overviewLabels ? Float(progress) : 0
+                tag.position = CGPoint(x: x, y: size.height - y + 6)
+                tag.set(active: i == Int(r.rounded()))
+                tag.opacity = config.overviewLabels ? Float(progress) : 0
             }
         }
         if config.overviewIcons {

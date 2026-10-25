@@ -162,8 +162,8 @@ extension WindowManager {
         updateRing(at: CACurrentMediaTime())
     }
 
-    func workspaceNames(_ m: Int) -> [String] {
-        world.monitors[m].workspaces.enumerated().map { i, ws in ws.name ?? "\(i + 1)" }
+    func workspaceNames(_ m: Int) -> [String?] {
+        world.monitors[m].workspaces.map(\.name)
     }
 
     func sceneContent(_ m: Int) -> Scene.Content {
