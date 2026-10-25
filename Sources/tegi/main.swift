@@ -1,9 +1,15 @@
 import AppKit
+import ServiceManagement
 import TegiCore
 import UniformTypeIdentifiers
 
 let configURL = FileManager.default.homeDirectoryForCurrentUser.appending(path: ".config/tegi/config")
 let defaultsURL = configURL.deletingLastPathComponent().appending(path: "defaults")
+let installed = Bundle.main.bundlePath.hasPrefix("/Applications/")
+// The Homebrew command is a symlink into the app, so the bundle is found from the resolved path.
+let version = Bundle(url: URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath()
+    .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent())?
+    .infoDictionary?["CFBundleShortVersionString"] as? String ?? "dev"
 
 final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let status = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -74,6 +80,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         watchConfig()
         refresh()
         if firstRun {
+            if installed { try? SMAppService.mainApp.register() }
             overlay.show(wm.config)
             banner.show("Created a config at ~/.config/tegi/config", for: 8)
         }
@@ -214,6 +221,11 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         } else {
             menu.addItem(item("Open Accessibility Settings…", #selector(openAccessibility)))
         }
+        if installed {
+            let login = item("Start at Login", #selector(toggleLogin))
+            login.state = SMAppService.mainApp.status == .enabled ? .on : .off
+            menu.addItem(login)
+        }
         menu.addItem(item("Open Config", #selector(openConfig)))
         menu.addItem(item("Open Defaults", #selector(openDefaults)))
         menu.addItem(.separator())
@@ -238,6 +250,15 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func toggleOverview() { wm?.run(.toggleOverview) }
+
+    @objc private func toggleLogin() {
+        let service = SMAppService.mainApp
+        do {
+            if service.status == .enabled { try service.unregister() } else { try service.register() }
+        } catch {
+            banner.show("Couldn't change Start at Login: \(error.localizedDescription)", for: 6)
+        }
+    }
 
     @objc private func showHotkeys() {
         if let wm { overlay.show(wm.config) }
@@ -285,6 +306,7 @@ usage: tegi                    run the window manager
        tegi msg event-stream   print the same as one line on every change
        tegi msg quit           quit, putting hidden windows back on screen
        tegi validate [file]    check a config file
+       tegi --version          print the version
 """
 
 let args = Array(CommandLine.arguments.dropFirst())
@@ -313,6 +335,10 @@ case "validate":
     } catch {
         fail("\(url.path): \(error)")
     }
+case "--version", "version":
+    print("tegi \(version)")
+case "--help", "-h", "help":
+    print(usage)
 default:
     fail(usage)
 }
