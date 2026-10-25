@@ -1,4 +1,5 @@
 import AppKit
+import SwiftUI
 import TegiCore
 
 final class HotkeyOverlay {
@@ -37,58 +38,24 @@ final class HotkeyOverlay {
     func show(_ config: Config) {
         hide()
         func keys(_ c: Command) -> String? { config.binds.filter { $0.value == c }.map { $0.key.symbol(hyper: config.mod) }.sorted().first }
-
-        let grid = NSGridView()
-        grid.rowSpacing = 7
-        grid.columnSpacing = 16
-        for (title, rows) in Self.sections {
-            let rows = rows.filter { $0.1.allSatisfy { keys($0) != nil } }
-            guard !rows.isEmpty else { continue }
-            if grid.numberOfRows > 0 { grid.addRow(with: [NSGridCell.emptyContentView]).height = 6 }
-            let header = NSTextField(labelWithString: title)
-            header.font = .systemFont(ofSize: 12, weight: .semibold)
-            header.textColor = .secondaryLabelColor
-            grid.addRow(with: [NSGridCell.emptyContentView, header])
-            for (label, commands) in rows {
-                let caps = NSStackView(views: commands.compactMap(keys).map(Keycap.init))
-                caps.spacing = 4
-                let text = NSTextField(labelWithString: label)
-                text.font = .systemFont(ofSize: 14)
-                text.textColor = .labelColor
-                grid.addRow(with: [caps, text])
-            }
-        }
-        if let again = keys(.showHotkeyOverlay) {
-            let hint = NSTextField(labelWithString: "\(again) shows this again; any key closes it")
-            hint.font = .systemFont(ofSize: 12)
-            hint.textColor = .secondaryLabelColor
-            grid.addRow(with: [NSGridCell.emptyContentView]).height = 6
-            grid.addRow(with: [NSGridCell.emptyContentView, hint])
-        }
-        grid.column(at: 0).xPlacement = .trailing
-        grid.rowAlignment = .firstBaseline
-
-        let container = Background()
-        container.addSubview(grid)
-        grid.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            grid.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 24),
-            grid.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -28),
-            grid.topAnchor.constraint(equalTo: container.topAnchor, constant: 20),
-            grid.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -22),
-        ])
+        let sections = Self.sections.map { title, rows in
+            CheatSheet.Section(title: title, rows: rows.compactMap { label, commands in
+                let caps = commands.compactMap(keys)
+                return caps.count == commands.count ? CheatSheet.Row(label: label, keys: caps) : nil
+            })
+        }.filter { !$0.rows.isEmpty }
+        let hint = keys(.showHotkeyOverlay).map { "\($0) shows this again · any key closes it" }
+        let host = NSHostingView(rootView: CheatSheet(sections: sections, hint: hint))
 
         let panel = NSPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
-        panel.appearance = NSAppearance(named: .darkAqua)
         panel.isOpaque = false
         panel.backgroundColor = .clear
-        panel.hasShadow = true
+        panel.hasShadow = false
         panel.animationBehavior = .none
         panel.level = .statusBar
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        panel.contentView = container
-        container.layoutSubtreeIfNeeded()
-        panel.setContentSize(container.fittingSize)
+        panel.contentView = host
+        panel.setContentSize(host.fittingSize)
         if let screen = NSScreen.main {
             let f = screen.visibleFrame
             panel.setFrameOrigin(NSPoint(x: (f.midX - panel.frame.width / 2).rounded(), y: (f.midY - panel.frame.height / 2).rounded()))
@@ -108,42 +75,43 @@ final class HotkeyOverlay {
     }
 }
 
-private final class Background: NSView {
-    override func draw(_ dirtyRect: NSRect) {
-        let shape = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 14, yRadius: 14)
-        NSColor(white: 0.12, alpha: 1).setFill()
-        shape.fill()
-        NSColor(white: 1, alpha: 0.1).setStroke()
-        shape.stroke()
-    }
-}
+/// The shortcuts in columns on frosted glass, with the mascot peeking over the top.
+private struct CheatSheet: View {
+    struct Row { let label: String; let keys: [String] }
+    struct Section { let title: String; let rows: [Row] }
+    let sections: [Section]
+    let hint: String?
 
-private final class Keycap: NSView {
-    private let text: NSAttributedString
-
-    init(_ symbol: String) {
-        text = NSAttributedString(string: symbol, attributes: [
-            .font: NSFont.systemFont(ofSize: 13, weight: .medium),
-            .foregroundColor: NSColor.labelColor,
-        ])
-        super.init(frame: .zero)
-        wantsLayer = true
-        layer?.cornerRadius = 5
-        layer?.backgroundColor = NSColor(white: 1, alpha: 0.12).cgColor
-        setContentHuggingPriority(.required, for: .horizontal)
-    }
-
-    required init?(coder: NSCoder) { fatalError() }
-
-    override var intrinsicContentSize: NSSize {
-        let s = text.size()
-        return NSSize(width: max(26, ceil(s.width) + 14), height: ceil(s.height) + 6)
-    }
-
-    override var firstBaselineOffsetFromTop: CGFloat { 3 + NSFont.systemFont(ofSize: 13, weight: .medium).ascender }
-
-    override func draw(_ dirtyRect: NSRect) {
-        let s = text.size()
-        text.draw(at: NSPoint(x: (bounds.width - s.width) / 2, y: (bounds.height - s.height) / 2))
+    var body: some View {
+        ZStack(alignment: .top) {
+            Mascot(ringWidth: 0, radius: 7).frame(width: 28, height: 32)
+            VStack(spacing: 16) {
+                HStack(alignment: .top, spacing: 30) {
+                    ForEach(Array(sections.enumerated()), id: \.offset) { _, section in
+                        VStack(alignment: .leading, spacing: 9) {
+                            Text(section.title.uppercased())
+                                .font(.system(size: 10.5, weight: .bold, design: .rounded)).tracking(0.4)
+                                .foregroundStyle(.secondary)
+                            Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 7) {
+                                ForEach(Array(section.rows.enumerated()), id: \.offset) { _, row in
+                                    GridRow {
+                                        HStack(spacing: 4) { ForEach(row.keys, id: \.self) { KeyCap(text: $0) } }
+                                            .gridColumnAlignment(.trailing)
+                                        Text(row.label).font(.system(size: 12.5, weight: .medium, design: .rounded))
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                if let hint {
+                    Text(hint).font(.system(size: 11.5, weight: .medium, design: .rounded)).foregroundStyle(.secondary)
+                }
+            }
+            .padding(24)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+            .padding(.top, 18)
+        }
+        .fixedSize()
     }
 }
