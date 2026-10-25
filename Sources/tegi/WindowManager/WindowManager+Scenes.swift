@@ -80,7 +80,13 @@ extension WindowManager {
             updateRing(at: CACurrentMediaTime())
         } else {
             for mon in world.monitors { scenes[mon.id]?.closeOverview(at: mon.active) }
-            if let picked { focusWindow(picked) } else { focusModel() }
+            if let picked {
+                focusWindow(picked)
+            } else if let id = focused, floatersShowing(on: world.focusedMonitor).contains(id) {
+                focusWindow(id)
+            } else {
+                focusModel()
+            }
         }
     }
 
@@ -156,21 +162,33 @@ extension WindowManager {
         let mon = world.monitors[m]
         let floatingFocused = m == world.focusedMonitor && focused.flatMap { wins[$0] }?.floating == true
         let ring = floatingFocused ? nil : m == world.focusedMonitor ? config.focusRingColor : config.focusRingInactiveColor
+        // Floating windows can sit above or below tiled ones; macOS decides, so the picture asks it.
+        let homes = Set(mon.workspaces.map(\.id))
+        let floaters = wins.values.filter { $0.floating && !$0.suspended && $0.floatHome.map(homes.contains) == true }
+        let stack = floaters.isEmpty ? [:] : stackOrder()
+        func depth(_ id: WindowID) -> CGFloat { wins[id].flatMap { stack[$0.windowID] } ?? 0 }
         return mon.workspaces.indices.map { w in
             let ws = mon.workspaces[w]
             let ringed = w == mon.active && !ws.columns.isEmpty && !ws.columns[ws.active].fullscreen
             var windows = world.stripFrames(monitor: m, workspace: w, config: config).map { f in
                 Scene.Window(id: f.id, frame: f.frame, ring: f.active && ringed ? ring : nil, floating: false,
-                             image: snapshots.images[f.id], icon: wins[f.id]?.worker.icon)
+                             depth: depth(f.id), image: snapshots.images[f.id], icon: wins[f.id]?.worker.icon)
             }
             let id = mon.workspaces[w].id
             for win in wins.values where win.floating && !win.suspended && win.floatHome == id {
                 guard let f = win.floatFrame else { continue }
                 windows.append(Scene.Window(id: win.id, frame: f.offsetBy(dx: -mon.area.minX, dy: -mon.area.minY),
-                                            ring: nil, floating: true, image: snapshots.images[win.id], icon: win.worker.icon))
+                                            ring: nil, floating: true, depth: depth(win.id), image: snapshots.images[win.id], icon: win.worker.icon))
             }
             return windows
         }
+    }
+
+    // Front to back, as 1 down to 0.
+    func stackOrder() -> [CGWindowID: CGFloat] {
+        let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
+        let ids = list.compactMap { $0[kCGWindowNumber as String] as? CGWindowID }
+        return Dictionary(ids.enumerated().map { ($1, CGFloat(ids.count - $0) / CGFloat(max(ids.count, 1))) }, uniquingKeysWith: { a, _ in a })
     }
 
     func insertHint(monitor m: Int, workspace w: Int, at point: CGPoint) -> CGRect? {

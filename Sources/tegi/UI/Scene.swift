@@ -8,6 +8,7 @@ final class Scene: NSObject {
         var frame: CGRect
         var ring: Color?
         var floating: Bool
+        var depth: CGFloat = 0
         var image: IOSurface?
         var icon: NSImage?
     }
@@ -26,6 +27,7 @@ final class Scene: NSObject {
     private let root = CALayer()
     private var workspaces: [WorkspaceLayers] = []
     private var cards: [WindowID: CALayer] = [:]
+    private var depths: [WindowID: CGFloat] = [:]
     private let ring = CALayer()
     private let hint = CALayer()
     private var notice: CATextLayer?
@@ -143,8 +145,9 @@ final class Scene: NSObject {
         var seen: Set<WindowID> = []
         ring.removeFromSuperlayer()
         for (w, windows) in content.enumerated() {
-            for win in windows.sorted(by: { !$0.floating && $1.floating }) {
+            for win in windows {
                 seen.insert(win.id)
+                depths[win.id] = win.depth
                 guard drag?.id != win.id || drag?.moving != true else { continue }
                 let card = cards[win.id] ?? makeCard(win)
                 cards[win.id] = card
@@ -154,7 +157,7 @@ final class Scene: NSObject {
                 } else {
                     move(card, to: flip(win.frame), animated: animated)
                 }
-                if win.floating { card.zPosition = 1 }
+                card.zPosition = win.depth
                 if let image = win.image, card.contents == nil { setContents(image, of: card) }
                 if let color = win.ring {
                     ring.borderColor = cgColor(color)
@@ -166,6 +169,7 @@ final class Scene: NSObject {
         for (id, card) in cards where !seen.contains(id) {
             card.removeFromSuperlayer()
             cards[id] = nil
+            depths[id] = nil
         }
         CATransaction.commit()
     }
@@ -442,7 +446,7 @@ final class Scene: NSObject {
             layer.removeFromSuperlayer()
             layer.frame = frame
             layer.opacity = 1
-            layer.zPosition = 0
+            layer.zPosition = depths[d.id] ?? 0
             workspaces[w].container.addSublayer(layer)
             CATransaction.commit()
             onDrop(d.id, w, local)
@@ -461,7 +465,7 @@ final class Scene: NSObject {
         layer.removeFromSuperlayer()
         layer.frame = frame
         layer.opacity = 1
-        layer.zPosition = 0
+        layer.zPosition = layer.name.flatMap { WindowID($0) }.flatMap { depths[$0] } ?? 0
         home?.addSublayer(layer)
         CATransaction.commit()
     }
