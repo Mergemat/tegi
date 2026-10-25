@@ -143,11 +143,12 @@ private final class SwitcherPanel: NSPanel {
     func show(_ items: [RecentWindows.Item], selected: Int) {
         guard let screen = NSScreen.main else { return }
         let visible = screen.visibleFrame
-        let maxHeight = min(420, visible.height * 0.45)
+        // One height for every tile, and widths kept between portrait and wide, so the row reads as even.
+        let tall = min(150, visible.height * 0.2)
         var sizes = items.map { item -> CGSize in
             if model.icons { return CGSize(width: 84, height: 84) }
-            let scale = min(0.5, maxHeight / max(item.size.height, 1))
-            return CGSize(width: item.size.width * scale, height: item.size.height * scale)
+            let aspect = min(max(item.size.width / max(item.size.height, 1), 0.75), 1.8)
+            return CGSize(width: tall * aspect, height: tall)
         }
         let chrome = SwitcherView.pad * 2 + SwitcherView.spacing * Double(max(items.count - 1, 0))
         let fit = min(1, (visible.width * 0.92 - chrome) / max(sizes.reduce(0) { $0 + $1.width }, 1))
@@ -161,7 +162,7 @@ private final class SwitcherPanel: NSPanel {
         if first {
             model.selected = selected
         } else {
-            withAnimation(.spring(duration: 0.28, bounce: 0.3)) { model.selected = selected }
+            withAnimation(.spring(duration: 0.3, bounce: 0.2)) { model.selected = selected }
         }
         if !isVisible { orderFrontRegardless() }
     }
@@ -182,43 +183,56 @@ private final class SwitcherModel: ObservableObject {
     }
 }
 
-/// The recent windows on a plain frosted strip: the picked one wears the focus ring, with the mascot peeking over it.
+/// The recent windows on a plain frosted strip: one focus ring glides between them, with the mascot riding on it.
 private struct SwitcherView: View {
-    static let pad = 14.0, spacing = 12.0, label = 26.0, peek = 18.0
+    static let pad = 16.0, spacing = 14.0, label = 30.0, peek = 18.0
     @ObservedObject var model: SwitcherModel
+    @Namespace private var tiles
+    @State private var shown = false
 
     var body: some View {
+        let picked = model.items.indices.contains(model.selected) ? model.items[model.selected] : nil
         ZStack(alignment: .topLeading) {
             if model.mascot { Mascot(ringWidth: 0, radius: 7).frame(width: 28, height: 32).offset(x: mascotX - 14, y: 0) }
-            VStack(spacing: 8) {
+            VStack(spacing: 10) {
                 HStack(spacing: Self.spacing) {
                     ForEach(Array(model.items.enumerated()), id: \.element.id) { i, item in
-                        thumb(item, size: model.sizes.indices.contains(i) ? model.sizes[i] : .zero, picked: i == model.selected)
+                        thumb(item, size: model.sizes.indices.contains(i) ? model.sizes[i] : .zero)
+                            .matchedGeometryEffect(id: item.id, in: tiles)
                     }
                 }
-                if model.items.indices.contains(model.selected) {
-                    let item = model.items[model.selected]
-                    Text(item.title.isEmpty ? item.app : item.title)
-                        .font(.system(size: 12, weight: .semibold, design: .rounded))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .frame(height: Self.label - 8)
+                .overlay {
+                    if let picked {
+                        RoundedRectangle(cornerRadius: 15, style: .continuous)
+                            .strokeBorder(model.ring, lineWidth: 3)
+                            .padding(-5)
+                            .matchedGeometryEffect(id: picked.id, in: tiles, isSource: false)
+                    }
                 }
+                Text(picked.map { $0.title.isEmpty ? $0.app : $0.title } ?? "")
+                    .font(.system(size: 12.5, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .frame(maxWidth: 420)
+                    .frame(height: Self.label - 10)
             }
             .padding(Self.pad)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
             .padding(.top, model.mascot ? Self.peek : 0)
         }
+        .scaleEffect(shown ? 1 : 0.97)
+        .opacity(shown ? 1 : 0)
+        .onAppear { withAnimation(.easeOut(duration: 0.14)) { shown = true } }
     }
 
-    // Above the middle of the picked window, so the mascot moves along as you step.
+    // Above the middle of the picked window, so the mascot moves along with the ring.
     private var mascotX: Double {
         let before = model.sizes.prefix(model.selected).reduce(0) { $0 + $1.width + Self.spacing }
         let width = model.sizes.indices.contains(model.selected) ? model.sizes[model.selected].width : 0
         return Self.pad + before + width / 2
     }
 
-    private func thumb(_ item: RecentWindows.Item, size: CGSize, picked: Bool) -> some View {
+    private func thumb(_ item: RecentWindows.Item, size: CGSize) -> some View {
         Group {
             if let image = item.image {
                 Surface(image: image)
@@ -233,13 +247,6 @@ private struct SwitcherView: View {
         }
         .frame(width: size.width, height: size.height)
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .strokeBorder(model.ring, lineWidth: 3)
-                .padding(-5)
-                .opacity(picked ? 1 : 0)
-        }
-        .scaleEffect(picked ? 1 : 0.94)
     }
 }
 
