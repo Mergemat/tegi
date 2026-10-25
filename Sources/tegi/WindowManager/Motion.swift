@@ -3,29 +3,6 @@ import QuartzCore
 import TegiCore
 
 final class Motion: NSObject {
-    private struct Flight {
-        var x, y, w, h: Spring
-        var monitor: Int
-
-        init(from: CGRect, to: CGRect, monitor: Int, velocity: Double?, at t: Double, _ springs: Springs) {
-            x = Spring(from: from.minX, to: to.minX, velocity: velocity ?? 0, start: t, params: springs.position, slowdown: springs.slowdown)
-            y = Spring(from: from.minY, to: to.minY, start: t, params: springs.position, slowdown: springs.slowdown)
-            w = Spring(from: from.width, to: to.width, start: t, params: springs.size, slowdown: springs.slowdown)
-            h = Spring(from: from.height, to: to.height, start: t, params: springs.size, slowdown: springs.slowdown)
-            self.monitor = monitor
-        }
-
-        var target: CGRect { CGRect(x: x.to, y: y.to, width: w.to, height: h.to) }
-
-        func frame(at t: Double) -> CGRect {
-            CGRect(x: x.value(at: t), y: y.value(at: t), width: w.value(at: t), height: h.value(at: t))
-        }
-
-        func isDone(at t: Double) -> Bool {
-            x.isDone(at: t) && y.isDone(at: t) && w.isDone(at: t) && h.isDone(at: t)
-        }
-    }
-
     struct Springs {
         var position: SpringParams
         var size: SpringParams
@@ -39,28 +16,29 @@ final class Motion: NSObject {
     private var stats: (ticks: Int, start: Double, windows: [WindowID: (app: String, sent: Int, landed: Int)])?
 
     var isMoving: Bool { !flights.isEmpty }
-    var moving: [WindowID] { Array(flights.keys) }
+    /// The latest time a frame was shown for; the display link runs ahead of the clock, and a press between
+    /// two frames mustn't send windows back to where they were a frame ago.
+    private(set) var clock: CFTimeInterval = 0
+
+    func isFlying(_ id: WindowID) -> Bool { flights[id] != nil }
 
     func current(_ id: WindowID, at t: Double) -> (frame: CGRect, monitor: Int)? {
         if let f = flights[id] { return (f.frame(at: t), f.monitor) }
         return resting[id]
     }
 
+    /// A new flight waits `delay` before it sets off, so windows from faster apps wait for slower ones.
     func move(_ id: WindowID, from: CGRect, to: CGRect, monitor: Int, at t: Double, velocity: Double? = nil,
-              springs: Springs) -> Bool {
+              delay: Double = 0, springs: Springs) -> Bool {
         if var f = flights[id] {
-            if f.target != to {
-                f.x = f.x.retargeted(to: to.minX, at: t)
-                f.y = f.y.retargeted(to: to.minY, at: t)
-                f.w = f.w.retargeted(to: to.width, at: t)
-                f.h = f.h.retargeted(to: to.height, at: t)
-            }
+            if f.target != to { f.retarget(to: to, at: t) }
             if let velocity { f.x.velocity = velocity }
             flights[id] = f
             return true
         }
         guard from != to else { return false }
-        flights[id] = Flight(from: from, to: to, monitor: monitor, velocity: velocity, at: t, springs)
+        flights[id] = Flight(from: from, to: to, monitor: monitor, velocity: velocity, at: t, delay: delay,
+                             position: springs.position, size: springs.size, slowdown: springs.slowdown)
         resting[id] = nil
         if stats == nil { stats = (0, t, [:]) }
         return true
@@ -82,12 +60,11 @@ final class Motion: NSObject {
         stopLink()
     }
 
-    /// Each window's frame for time t, held back by its delay so windows from faster apps wait for slower ones.
-    func frames(at t: Double, delay: (WindowID) -> Double = { _ in 0 }) -> [(id: WindowID, frame: CGRect, monitor: Int, last: Bool)] {
+    func frames(at t: Double) -> [(id: WindowID, frame: CGRect, monitor: Int, last: Bool)] {
         var out: [(WindowID, CGRect, Int, Bool)] = []
         stats?.ticks += 1
+        clock = max(clock, t)
         for (id, f) in flights {
-            let t = t - delay(id)
             let done = f.isDone(at: t)
             let frame = (done ? f.target : f.frame(at: t)).roundedToPoints
             out.append((id, frame, f.monitor, done))

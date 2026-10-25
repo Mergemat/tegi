@@ -117,6 +117,7 @@ final class AppWorker {
     }
     private var draining = false
     private var enhancedOff = false
+    private var enhancedChecked = -Double.infinity
     private var drains = 0
 
     init(_ app: NSRunningApplication, onEvent: @escaping (AppWorker, AXUIElement, Event) -> Void) {
@@ -216,10 +217,15 @@ final class AppWorker {
         let jobs = pending
         pending = [:]
         lock.unlock()
-        // While this is on, some apps animate every frame change themselves.
-        if !enhancedOff, app.bool("AXEnhancedUserInterface") {
-            app.set("AXEnhancedUserInterface", kCFBooleanFalse)
-            enhancedOff = true
+        // While this is on, some apps animate every frame change themselves. Asking costs a round trip to the app,
+        // hundreds of milliseconds when it's busy, so not every frame: tools that turn it on don't do so often.
+        let now = CACurrentMediaTime()
+        if !enhancedOff, now - enhancedChecked > 5 {
+            enhancedChecked = now
+            if app.bool("AXEnhancedUserInterface") {
+                app.set("AXEnhancedUserInterface", kCFBooleanFalse)
+                enhancedOff = true
+            }
         }
         for (id, job) in jobs {
             let actual = job.window.setFrame(job.frame, resize: job.resize, verify: job.verify)
@@ -239,6 +245,7 @@ final class AppWorker {
                 guard drain == drains, enhancedOff else { return }
                 app.set("AXEnhancedUserInterface", kCFBooleanTrue)
                 enhancedOff = false
+                enhancedChecked = -.infinity
             }
         }
         lock.lock()

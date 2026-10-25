@@ -13,7 +13,7 @@ extension WindowManager {
         }
         // Pictures, not streams: any stream puts the screen-sharing indicator in the menu bar.
         freshener = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
-            guard let self, !paused, !motion.isMoving else { return }
+            guard let self, !paused, !motion.isMoving, CACurrentMediaTime() - lastFocusMove > 1 else { return }
             freshTicks += 1
             if overview {
                 refreshSnapshots(world.monitors.indices.flatMap { m in self.sceneContent(m).flatMap { $0.map(\.id) } })
@@ -265,7 +265,8 @@ extension WindowManager {
         warmup?.cancel()
         let work = DispatchWorkItem { [weak self] in
             guard let self, !motion.isMoving, snapshots.allowed else { return }
-            refreshSnapshots(targets.filter(\.value.visible).map(\.key) + floatersShowingEverywhere())
+            refreshSnapshots(Array(Set(targets.filter(\.value.visible).map(\.key) + floatersShowingEverywhere()).union(leftBehind)))
+            leftBehind = []
         }
         warmup = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6, execute: work)

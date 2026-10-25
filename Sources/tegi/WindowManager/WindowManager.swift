@@ -48,6 +48,10 @@ final class WindowManager {
     var drift: [WindowID: Drift] = [:]
     var strays: [WindowID: DispatchWorkItem] = [:]
     var handoffs = 0
+    var handingOff = false
+    var settling: DispatchWorkItem?
+    var lastFocusMove = 0.0
+    var leftBehind: Set<WindowID> = []
 
     var generation: [WindowID: Int] = [:]
     var unlanded: Set<WindowID> = []
@@ -57,7 +61,13 @@ final class WindowManager {
     var floatHidden: Set<WindowID> = []
     var focused: WindowID? {
         // A window's picture is freshest as you leave it, which beats capturing it every second while you work in it.
-        didSet { if let old = oldValue, old != focused, wins[old] != nil { refreshSnapshots([old]) } }
+        // It's taken once things are still: a capture while apps trade focus can stall the window server for half a second.
+        didSet {
+            if let old = oldValue, old != focused, wins[old] != nil {
+                leftBehind.insert(old)
+                scheduleWarmup()
+            }
+        }
     }
     // macOS echoes focus changes, sometimes late; while tegi moves focus, other echoes are stale.
     var pendingFocus: (id: WindowID?, until: Date)?
@@ -188,16 +198,23 @@ final class WindowManager {
         let before = world.focusedWindow
         world.perform(command, config: config)
         let leaving = before.flatMap { wins[$0]?.worker }
-        if world.focusedWindow != before, !overview, let id = world.focusedWindow, wins[id] != nil {
+        let changed = world.focusedWindow != before && !overview
+        // In a burst of presses the strip follows each one at once, and only where focus ends up gets activated: each
+        // activation blocks that app's moves for tens of milliseconds. A press to a column already in view moves nothing,
+        // so a press soon after the last counts too.
+        let now = CACurrentMediaTime()
+        let underway = motion.isMoving || handingOff || now - lastFocusMove < 0.3
+        if changed { lastFocusMove = now }
+        if changed, !underway, let id = world.focusedWindow, wins[id] != nil {
             // Activating an app keeps it busy for tens of milliseconds, and its windows can't move until it's done; the
             // app losing focus is briefly busy too. So focus goes first and the whole strip sets off together once both
             // have answered, instead of their windows starting late and the strip tearing apart. A hung app can't hold it up.
             handoffs += 1
+            handingOff = true
             let mine = handoffs
-            var moved = false
             let go = { [weak self] in
-                guard let self, !moved, handoffs == mine else { return }
-                moved = true
+                guard let self, handingOff, handoffs == mine else { return }
+                handingOff = false
                 relayout(measuringFrom: start)
             }
             focusModel(layout: false) {
@@ -206,8 +223,22 @@ final class WindowManager {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: go)
             return
         }
+        handingOff = false
         relayout(measuringFrom: start)
-        if world.focusedWindow != before && !overview { focusModel() }
+        if changed { underway ? focusSoon() : focusModel() }
+    }
+
+    /// Focus as far as tegi is concerned now, and for the app once the presses stop, held or tapped fast. An app that
+    /// gains focus and loses it a moment later can stall the screen, so it isn't activated on the way past.
+    func focusSoon() {
+        guard let id = world.focusedWindow, wins[id] != nil else { return focusModel() }
+        focused = id
+        expectFocus(id)
+        recent.focused(id)
+        settling?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.focusModel(layout: false) }
+        settling = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: work)
     }
 
     /// What `open -b` does, without its process and LaunchServices round trip: a window tegi already holds is focused at once.
@@ -309,7 +340,9 @@ final class WindowManager {
         }
         world.pinned = Set(wins.values.compactMap { $0.floating && !$0.suspended ? $0.floatHome : nil })
         let placements = world.layout(config: config)
-        let now = CACurrentMediaTime()
+        let now = max(CACurrentMediaTime(), motion.clock)
+        // Apps take different times to move a window; holding the quicker ones back keeps the strip in one piece.
+        let slowest = placements.keys.compactMap { wins[$0]?.worker.lag }.max() ?? 0
         let animate = !direct && config.animations.on && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         followWorkspaces(animate: animate)
         let views = world.monitors.indices.map { world.viewPosition(monitor: $0, config: config) }
@@ -319,7 +352,8 @@ final class WindowManager {
             if animate, let to = p.strip, let from = motion.current(id, at: now), from.monitor == p.monitor,
                let springs = springs(from: from.frame, to: to, monitor: p.monitor, views: views),
                motion.move(id, from: from.frame, to: to, monitor: p.monitor, at: now,
-                           velocity: fling.flatMap { $0.monitor == p.monitor ? $0.velocity : nil }, springs: springs) {
+                           velocity: fling.flatMap { $0.monitor == p.monitor ? $0.velocity : nil },
+                           delay: min(0.06, slowest - (wins[id]?.worker.lag ?? slowest)), springs: springs) {
                 continue
             }
             motion.stop(id, at: p.strip.map { ($0, p.monitor) })
@@ -348,10 +382,7 @@ final class WindowManager {
 
     func tick(at now: CFTimeInterval) {
         guard !paused else { return motion.cancel() }
-        // Apps take different times to move a window; holding the quicker ones back keeps the strip in one piece.
-        let lags = Dictionary(wins.map { ($0.key, $0.value.worker.lag) }, uniquingKeysWith: { a, _ in a })
-        let slowest = motion.moving.compactMap { lags[$0] }.max() ?? 0
-        for f in motion.frames(at: now, delay: { min(0.06, max(0, slowest - (lags[$0] ?? slowest))) })
+        for f in motion.frames(at: now)
             where world.monitors.indices.contains(f.monitor) {
             send(id: f.id, world.place(f.frame, on: f.monitor).frame, verify: f.last)
         }
@@ -400,7 +431,7 @@ final class WindowManager {
         guard p?.visible == true, var frame = p?.frame else { return nil }
         // Mid-motion the ring follows the window as the window server shows it: apps apply tegi's orders a few frames
         // late, and report them done before they're on screen, so either would leave the ring around empty space.
-        if moving != nil, let wid = wins[id]?.windowID {
+        if motion.isFlying(id), let wid = wins[id]?.windowID {
             guard let at = onScreen(wid), world.monitors.contains(where: { $0.screen.intersection(at).width > 40 }) else { return nil }
             frame = at
         }
@@ -506,6 +537,7 @@ final class WindowManager {
         strays.removeValue(forKey: id)?.cancel()
         verified.remove(id)
         floatHidden.remove(id)
+        leftBehind.remove(id)
         generation[id] = nil
         unlanded.remove(id)
         dragged[id] = nil
@@ -546,6 +578,8 @@ final class WindowManager {
             if win.floating { return floatingMoved(win) }
             let mouseDown = NSEvent.pressedMouseButtons & 1 != 0
             guard grab?.window != id else { return }
+            // tegi's own moves echo back every frame; reading each one would double the traffic to the app mid-motion.
+            if !mouseDown, motion.isFlying(id) || unlanded.contains(id) { return putBack(id, worker: worker, el: el) }
             worker.read(el) { [weak self] info in
                 guard let self, let info, wins[id] != nil else { return }
                 if info.fullscreen != win.suspended && !info.minimized { return suspend(win, info.fullscreen) }
@@ -565,10 +599,11 @@ final class WindowManager {
     /// An app moved its own tiled window, often restoring a saved frame right after it opens: tegi puts it back.
     func putBack(_ id: WindowID, worker: AppWorker, el: AXUIElement) {
         // tegi's own frames can report late, so only a window that is still off once things have settled is the app's doing.
-        let gen = generation[id]
         strays[id]?.cancel()
         let check = DispatchWorkItem { [weak self] in
-            guard let self, generation[id] == gen, !unlanded.contains(id), !motion.isMoving else { return }
+            guard let self, wins[id] != nil else { return }
+            guard !unlanded.contains(id), !motion.isMoving else { return putBack(id, worker: worker, el: el) }
+            let gen = generation[id]
             worker.read(el) { [weak self] info in
                 // Off screen, macOS keeps a hidden window's sliver its own way.
                 guard let self, generation[id] == gen, targets[id]?.visible == true, let frame = info?.frame, let laidOut = applied[id],
@@ -650,6 +685,7 @@ final class WindowManager {
             relayout()
             return
         }
+        settling?.cancel()
         focused = id
         expectFocus(id)
         recent.focused(id)
