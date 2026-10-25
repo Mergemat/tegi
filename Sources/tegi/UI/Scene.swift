@@ -494,10 +494,13 @@ final class Scene: NSObject {
             d.moving = true
             CATransaction.begin()
             CATransaction.setDisableActions(true)
+            // Lifted out of its zoomed workspace at the same size on screen: scaled, not resized, so the ring and badge inside scale with it.
             if let parent = layer.superlayer {
                 let frame = root.convert(layer.frame, from: parent)
+                let z = zoom.value(at: CACurrentMediaTime())
                 layer.removeFromSuperlayer()
-                layer.frame = frame
+                layer.transform = CATransform3DMakeScale(z, z, 1)
+                layer.position = CGPoint(x: frame.midX, y: frame.midY)
             }
             layer.zPosition = 20
             layer.opacity = 0.75
@@ -507,7 +510,8 @@ final class Scene: NSObject {
         }
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        layer.frame.origin = CGPoint(x: point.x - d.offset.x, y: point.y - d.offset.y)
+        let size = layer.frame.size
+        layer.position = CGPoint(x: point.x - d.offset.x + size.width / 2, y: point.y - d.offset.y + size.height / 2)
         if let (w, local) = workspace(at: point), let rect = onHint(w, local) {
             if hint.superlayer !== workspaces[w].container { workspaces[w].container.addSublayer(hint) }
             hint.zPosition = 5
@@ -548,6 +552,7 @@ final class Scene: NSObject {
             CATransaction.setDisableActions(true)
             let frame = workspaces[w].container.convert(layer.frame, from: root)
             layer.removeFromSuperlayer()
+            layer.transform = CATransform3DIdentity
             layer.frame = frame
             layer.opacity = 1
             layer.zPosition = depths[d.id] ?? 0
@@ -567,6 +572,7 @@ final class Scene: NSObject {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         layer.removeFromSuperlayer()
+        layer.transform = CATransform3DIdentity
         layer.frame = frame
         layer.opacity = 1
         layer.zPosition = layer.name.flatMap { WindowID($0) }.flatMap { depths[$0] } ?? 0
