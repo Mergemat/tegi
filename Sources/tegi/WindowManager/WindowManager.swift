@@ -228,17 +228,22 @@ final class WindowManager {
         if changed { underway ? focusSoon() : focusModel() }
     }
 
-    /// Focus as far as tegi is concerned now, and for the app once the presses stop, held or tapped fast. An app that
-    /// gains focus and loses it a moment later can stall the screen, so it isn't activated on the way past.
-    func focusSoon() {
+    /// Focus as far as tegi is concerned now, and for the app once the presses stop and the strip comes to rest. An app
+    /// that gains focus and loses it a moment later can stall the screen, so it isn't activated on the way past; and the
+    /// app losing focus stalls its windows for tens of milliseconds, which mid-slide shows as a jolt.
+    func focusSoon(after delay: Double = 0.15) {
         guard let id = world.focusedWindow, wins[id] != nil else { return focusModel() }
         focused = id
         expectFocus(id)
         recent.focused(id)
         settling?.cancel()
-        let work = DispatchWorkItem { [weak self] in self?.focusModel(layout: false) }
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            if motion.isMoving { return focusSoon(after: 1.0 / 60) }
+            focusModel(layout: false)
+        }
         settling = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: work)
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
     }
 
     /// What `open -b` does, without its process and LaunchServices round trip: a window tegi already holds is focused at once.
