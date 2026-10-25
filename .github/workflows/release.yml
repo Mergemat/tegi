@@ -1,36 +1,56 @@
 name: release
 
-# Push a tag like v0.1.0 to publish tegi-0.1.0.zip and update the Homebrew cask
-# in Mergemat/homebrew-tap. HOMEBREW_TAP_DEPLOY_KEY is the private half of a
-# deploy key that can write to that one repository.
+# Push a tag like v0.1.0 to publish tegi-0.1.0.zip with its checksum and build
+# provenance, then update the Homebrew cask in Mergemat/homebrew-tap. A tag like
+# v0.2.0-beta.1 publishes a prerelease and leaves the cask alone.
+# HOMEBREW_TAP_DEPLOY_KEY is the private half of a deploy key that can write to
+# that one repository.
 on:
   push:
-    tags: ["v*"]
+    tags: ["v*.*.*"]
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 jobs:
   release:
     runs-on: macos-26
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Build
-        run: ./scripts/release.sh "${GITHUB_REF_NAME#v}"
+        run: |
+          ./scripts/release.sh "${GITHUB_REF_NAME#v}"
+          cd .build/dist && shasum -a 256 tegi-*.zip > checksums.txt
 
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: .build/dist/tegi-*.zip
+
+      # Drafted first, so the release never appears without its files.
       - name: Publish the GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           v="${GITHUB_REF_NAME#v}"
-          gh release create "$GITHUB_REF_NAME" ".build/dist/tegi-$v.zip" \
-            --title "tegi $v" --generate-notes
+          pre=""
+          case "$v" in *-*) pre="--prerelease" ;; esac
+          gh release create "$GITHUB_REF_NAME" ".build/dist/tegi-$v.zip" .build/dist/checksums.txt \
+            --draft $pre --title "tegi $v" --generate-notes
+          gh release edit "$GITHUB_REF_NAME" --draft=false
 
       - name: Update the Homebrew cask
         env:
           DEPLOY_KEY: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
-        if: env.DEPLOY_KEY != ''
+        if: env.DEPLOY_KEY != '' && !contains(github.ref_name, '-')
         run: |
           v="${GITHUB_REF_NAME#v}"
           key="$RUNNER_TEMP/tap_key"

@@ -5,10 +5,30 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  test:
+  build:
     runs-on: macos-26
     steps:
-      - uses: actions/checkout@v5
-      - run: swift build
-      - run: swift test
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Test
+        run: swift test
+
+      - name: Build the app
+        run: |
+          VERSION="0.0.0-${GITHUB_SHA::7}" UNIVERSAL=1 ./scripts/app.sh
+          ditto -c -k --keepParent .build/tegi.app tegi.zip
+
+      # ditto keeps the executable bit and signature that a plain artifact upload would lose.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: tegi-${{ github.sha }}
+          path: tegi.zip
+          retention-days: 14
