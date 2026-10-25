@@ -341,24 +341,19 @@ struct ColorRow: View {
 
 struct MotionPane: View {
     @EnvironmentObject var model: SettingsModel
-    @State private var hop = false
+    @State private var act = Animations.Name.windowMovement
+    @State private var beat = false
 
     var body: some View {
         let a = model.shown.animations
-        let spring = a.springs[.windowMovement] ?? Animations().springs[.windowMovement]!
+        let spring = a.on ? a.springs[act] : nil
         Hero(height: 124) {
-            HStack(spacing: 8) {
-                Friend(radius: 9).frame(width: 46, height: 66)
-                Mascot(radius: 10).frame(width: 54, height: 66)
-                Friend(radius: 9).frame(width: 46, height: 66)
-            }
-            .frame(maxWidth: .infinity, alignment: hop ? .trailing : .leading)
-            .padding(.horizontal, 36)
-            .animation(a.on ? springAnimation(spring, slowdown: a.slowdown) : nil, value: hop)
-            SceneCaption("tap to play").frame(maxHeight: .infinity, alignment: .bottom).padding(.bottom, 6)
+            Stage(act: act, beat: beat)
+                .animation(spring.map { springAnimation($0, slowdown: a.slowdown) }, value: beat)
+            SceneCaption("\(act.title) · tap to replay").frame(maxHeight: .infinity, alignment: .bottom).padding(.bottom, 6)
         }
         .contentShape(Rectangle())
-        .onTapGesture { hop.toggle() }
+        .onTapGesture { play(act) }
 
         CardTitle("Everything")
         Card {
@@ -372,11 +367,69 @@ struct MotionPane: View {
         CardTitle("Each animation")
         Card {
             ForEach(Array(Animations.Name.allCases.enumerated()), id: \.offset) { i, name in
-                AnimationRow(name: name, last: i == Animations.Name.allCases.count - 1) { hop.toggle() }
+                AnimationRow(name: name, last: i == Animations.Name.allCases.count - 1) { play(name) }
             }
         }
         .opacity(a.on ? 1 : 0.5)
         .disabled(!a.on)
+    }
+
+    private func play(_ name: Animations.Name) {
+        // A new act starts from its first pose, not from wherever the last one left the stage.
+        if name != act {
+            var still = Transaction()
+            still.disablesAnimations = true
+            withTransaction(still) {
+                act = name
+                beat = false
+            }
+        }
+        DispatchQueue.main.async { beat.toggle() }
+    }
+}
+
+/// Two workspaces of windows acting out one animation: the beat flips between its two poses.
+struct Stage: View {
+    let act: Animations.Name
+    let beat: Bool
+    private let height: CGFloat = 66, gap: CGFloat = 30
+
+    var body: some View {
+        let moved = act == .windowMovement && beat
+        let overview = act == .overviewOpenClose && beat
+        let scale: CGFloat = overview ? 0.55 : 1
+        VStack(spacing: gap) {
+            HStack(spacing: 8) {
+                ForEach(moved ? [0, 2, 1] : [0, 1, 2], id: \.self) { i in
+                    if i == 1 {
+                        Mascot(radius: 10).frame(width: act == .windowResize && beat ? 110 : 54, height: height)
+                    } else {
+                        Friend(radius: 9).frame(width: 46, height: height)
+                    }
+                }
+            }
+            HStack(spacing: 8) {
+                Friend(radius: 9).frame(width: 64, height: height)
+                Friend(radius: 9).frame(width: 46, height: height)
+            }
+        }
+        .scaleEffect(scale, anchor: .top)
+        .offset(x: act == .horizontalViewMovement ? (beat ? -70 : 70) : 0,
+                y: act == .workspaceSwitch && beat ? -(height + gap)
+                    : overview ? height / 2 - scale * (2 * height + gap) / 2 : 0)
+        .frame(height: height, alignment: .top)
+    }
+}
+
+extension Animations.Name {
+    var title: String {
+        switch self {
+        case .horizontalViewMovement: "Scrolling the strip"
+        case .windowMovement: "Windows moving"
+        case .windowResize: "Windows resizing"
+        case .workspaceSwitch: "Switching workspaces"
+        case .overviewOpenClose: "Opening the overview"
+        }
     }
 }
 
@@ -411,23 +464,15 @@ struct AnimationRow: View {
         } ?? .custom
     }
 
-    private var title: String {
-        switch name {
-        case .horizontalViewMovement: "Scrolling the strip"
-        case .windowMovement: "Windows moving"
-        case .windowResize: "Windows resizing"
-        case .workspaceSwitch: "Switching workspaces"
-        case .overviewOpenClose: "Opening the overview"
-        }
-    }
-
     var body: some View {
         let spring = model.shown.animations.springs[name]
         let key = ["animation", name.rawValue]
-        Row(title: title, stacked: true, last: last && feel(spring) != .custom) {
+        Row(title: name.title, stacked: true, last: last && feel(spring) != .custom) {
             Choice(options: Feel.allCases.map { ($0.rawValue, $0) }, selected: feel(spring)) { f in
                 switch f {
-                case .off: model.set(key, ["off"])
+                case .off:
+                    model.set(key, ["off"])
+                    played()
                 case .custom: write(SpringParams(dampingRatio: 0.8, stiffness: 650))
                 default: write(params(f)!)
                 }
