@@ -117,7 +117,7 @@ struct SettingsView: View {
             rail
             page(t)
         }
-        .padding(.top, 44)
+        .padding(.top, 4)
         .padding(.leading, 14)
         .padding([.trailing, .bottom], 22)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -175,7 +175,7 @@ struct SettingsView: View {
                 Footer()
             }
         }
-        .scrollIndicators(.hidden)
+        .scrollIndicators(.never)
         .id(pane)
         .transition(.asymmetric(insertion: .move(edge: forward ? .bottom : .top).combined(with: .opacity),
                                 removal: .move(edge: forward ? .top : .bottom).combined(with: .opacity)))
