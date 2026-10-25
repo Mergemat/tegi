@@ -48,6 +48,7 @@ final class WindowManager {
     var drift: [WindowID: Drift] = [:]
     var strays: [WindowID: DispatchWorkItem] = [:]
     var handoffs = 0
+
     var generation: [WindowID: Int] = [:]
     var unlanded: Set<WindowID> = []
     var hideWhenLanded: Set<UInt32> = []
@@ -186,10 +187,11 @@ final class WindowManager {
         }
         let before = world.focusedWindow
         world.perform(command, config: config)
-        let leaving = before.flatMap { wins[$0]?.worker }, arriving = world.focusedWindow.flatMap { wins[$0]?.worker }
-        if world.focusedWindow != before, !overview, let leaving, let arriving, leaving !== arriving {
-            // An app losing focus is often busy for a moment, and windows it can't move then lurch mid-motion.
-            // So focus goes first, and the motion starts once that app answers again, or after a beat at most.
+        let leaving = before.flatMap { wins[$0]?.worker }
+        if world.focusedWindow != before, !overview, let id = world.focusedWindow, wins[id] != nil {
+            // Activating an app keeps it busy for tens of milliseconds, and its windows can't move until it's done; the
+            // app losing focus is briefly busy too. So focus goes first and the whole strip sets off together once both
+            // have answered, instead of their windows starting late and the strip tearing apart. A hung app can't hold it up.
             handoffs += 1
             let mine = handoffs
             var moved = false
@@ -198,8 +200,10 @@ final class WindowManager {
                 moved = true
                 relayout(measuringFrom: start)
             }
-            focusModel(layout: false) { leaving.whenAnswering(go) }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.08, execute: go)
+            focusModel(layout: false) {
+                if let leaving, leaving !== self.wins[id]?.worker { leaving.whenAnswering(go) } else { go() }
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: go)
             return
         }
         relayout(measuringFrom: start)
@@ -344,7 +348,11 @@ final class WindowManager {
 
     func tick(at now: CFTimeInterval) {
         guard !paused else { return motion.cancel() }
-        for f in motion.frames(at: now) where world.monitors.indices.contains(f.monitor) {
+        // Apps take different times to move a window; holding the quicker ones back keeps the strip in one piece.
+        let lags = Dictionary(wins.map { ($0.key, $0.value.worker.lag) }, uniquingKeysWith: { a, _ in a })
+        let slowest = motion.moving.compactMap { lags[$0] }.max() ?? 0
+        for f in motion.frames(at: now, delay: { min(0.06, max(0, slowest - (lags[$0] ?? slowest))) })
+            where world.monitors.indices.contains(f.monitor) {
             send(id: f.id, world.place(f.frame, on: f.monitor).frame, verify: f.last)
         }
         updateRing(at: now)
@@ -376,10 +384,26 @@ final class WindowManager {
         })
     }
 
+    func onScreen(_ wid: CGWindowID) -> CGRect? {
+        // The window server wants raw window numbers, not CFNumbers.
+        var ids = [UnsafeRawPointer(bitPattern: UInt(wid))]
+        guard let array = CFArrayCreate(nil, &ids, 1, nil),
+              let list = CGWindowListCreateDescriptionFromArray(array) as? [[String: Any]],
+              let bounds = list.first?[kCGWindowBounds as String] as! CFDictionary? else { return nil }
+        return CGRect(dictionaryRepresentation: bounds)
+    }
+
     func shownFrame(_ id: WindowID, at now: CFTimeInterval) -> CGRect? {
         if let g = grab, g.window == id, !g.resize, !g.floating { return g.current }
-        let p = motion.current(id, at: now).map { world.place($0.frame.roundedToPoints, on: $0.monitor) } ?? targets[id]
-        guard p?.visible == true, let frame = p?.frame else { return nil }
+        let moving = motion.current(id, at: now)
+        let p = moving.map { world.place($0.frame.roundedToPoints, on: $0.monitor) } ?? targets[id]
+        guard p?.visible == true, var frame = p?.frame else { return nil }
+        // Mid-motion the ring follows the window as the window server shows it: apps apply tegi's orders a few frames
+        // late, and report them done before they're on screen, so either would leave the ring around empty space.
+        if moving != nil, let wid = wins[id]?.windowID {
+            guard let at = onScreen(wid), world.monitors.contains(where: { $0.screen.intersection(at).width > 40 }) else { return nil }
+            frame = at
+        }
         return refusals[id]?.apply(to: frame) ?? frame
     }
 

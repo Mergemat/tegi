@@ -39,6 +39,7 @@ final class Motion: NSObject {
     private var stats: (ticks: Int, start: Double, windows: [WindowID: (app: String, sent: Int, landed: Int)])?
 
     var isMoving: Bool { !flights.isEmpty }
+    var moving: [WindowID] { Array(flights.keys) }
 
     func current(_ id: WindowID, at t: Double) -> (frame: CGRect, monitor: Int)? {
         if let f = flights[id] { return (f.frame(at: t), f.monitor) }
@@ -81,10 +82,12 @@ final class Motion: NSObject {
         stopLink()
     }
 
-    func frames(at t: Double) -> [(id: WindowID, frame: CGRect, monitor: Int, last: Bool)] {
+    /// Each window's frame for time t, held back by its delay so windows from faster apps wait for slower ones.
+    func frames(at t: Double, delay: (WindowID) -> Double = { _ in 0 }) -> [(id: WindowID, frame: CGRect, monitor: Int, last: Bool)] {
         var out: [(WindowID, CGRect, Int, Bool)] = []
         stats?.ticks += 1
         for (id, f) in flights {
+            let t = t - delay(id)
             let done = f.isDone(at: t)
             let frame = (done ? f.target : f.frame(at: t)).roundedToPoints
             out.append((id, frame, f.monitor, done))
