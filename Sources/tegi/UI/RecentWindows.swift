@@ -175,34 +175,31 @@ private final class SwitcherModel: ObservableObject {
     init(ring: SwiftUI.Color) { self.ring = ring }
 }
 
-/// The recent windows as a row of pictures; the picked one wears the focus ring, and the mascot peeks over the top.
+/// The recent windows on a plain frosted strip: the picked one wears the focus ring, with the mascot peeking over it.
 private struct SwitcherView: View {
-    static let pad = 26.0, spacing = 18.0, label = 44.0, peek = 30.0
+    static let pad = 14.0, spacing = 12.0, label = 26.0, peek = 18.0
     @ObservedObject var model: SwitcherModel
-    @Environment(\.colorScheme) private var scheme
 
     var body: some View {
-        let t = Theme(scheme)
         ZStack(alignment: .topLeading) {
-            Mascot(ringWidth: 0, radius: 10).frame(width: 44, height: 52).offset(x: mascotX - 22, y: 0)
-            VStack(spacing: 14) {
-                HStack(alignment: .center, spacing: Self.spacing) {
+            Mascot(ringWidth: 0, radius: 7).frame(width: 28, height: 32).offset(x: mascotX - 14, y: 0)
+            VStack(spacing: 8) {
+                HStack(spacing: Self.spacing) {
                     ForEach(Array(model.items.enumerated()), id: \.element.id) { i, item in
                         thumb(item, size: model.sizes.indices.contains(i) ? model.sizes[i] : .zero, picked: i == model.selected)
                     }
                 }
-                if model.items.indices.contains(model.selected) { name(model.items[model.selected], t) }
+                if model.items.indices.contains(model.selected) {
+                    let item = model.items[model.selected]
+                    Text(item.title.isEmpty ? item.app : item.title)
+                        .font(.system(size: 12, weight: .semibold, design: .rounded))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .frame(height: Self.label - 8)
+                }
             }
             .padding(Self.pad)
-            .background {
-                ZStack {
-                    t.background
-                    if t.night { Stars() }
-                }
-                .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
-            }
-            .overlay(RoundedRectangle(cornerRadius: 28, style: .continuous).strokeBorder(t.night ? SwiftUI.Color.white.opacity(0.14) : t.edge))
-            .shadow(color: .black.opacity(0.35), radius: 20, y: 8)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
             .padding(.top, Self.peek)
         }
     }
@@ -215,47 +212,25 @@ private struct SwitcherView: View {
     }
 
     private func thumb(_ item: RecentWindows.Item, size: CGSize, picked: Bool) -> some View {
-        ZStack(alignment: .bottomLeading) {
-            Group {
-                if let image = item.image {
-                    Surface(image: image)
-                } else {
-                    ZStack {
-                        Theme(scheme).chip
-                        if let icon = item.icon { Image(nsImage: icon).resizable().frame(width: 56, height: 56) }
-                    }
+        Group {
+            if let image = item.image {
+                Surface(image: image)
+            } else {
+                ZStack {
+                    SwiftUI.Color.primary.opacity(0.06)
+                    if let icon = item.icon { Image(nsImage: icon).resizable().frame(width: 48, height: 48) }
                 }
             }
-            .frame(width: size.width, height: size.height)
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            if let icon = item.icon, item.image != nil {
-                Image(nsImage: icon).resizable().frame(width: 32, height: 32)
-                    .shadow(color: .black.opacity(0.3), radius: 3, y: 2)
-                    .offset(x: -8, y: 8)
-            }
         }
+        .frame(width: size.width, height: size.height)
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .strokeBorder(model.ring, lineWidth: 3.5)
-                .padding(-6)
-                .shadow(color: model.ring.opacity(0.6), radius: 8)
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(model.ring, lineWidth: 3)
+                .padding(-5)
                 .opacity(picked ? 1 : 0)
         }
-        .scaleEffect(picked ? 1 : 0.92)
-        .opacity(picked ? 1 : 0.7)
-    }
-
-    private func name(_ item: RecentWindows.Item, _ t: Theme) -> some View {
-        HStack(spacing: 8) {
-            if let icon = item.icon { Image(nsImage: icon).resizable().frame(width: 18, height: 18) }
-            Text(item.title.isEmpty ? item.app : item.title).foregroundStyle(t.text).lineLimit(1)
-            if !item.title.isEmpty { Text(item.app).foregroundStyle(t.secondary).lineLimit(1).layoutPriority(1) }
-        }
-        .font(.system(size: 13, weight: .semibold, design: .rounded))
-        .padding(.horizontal, 14)
-        .frame(height: 30)
-        .background(t.chip, in: Capsule())
-        .frame(height: Self.label - 14)
+        .scaleEffect(picked ? 1 : 0.94)
     }
 }
 
