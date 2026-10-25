@@ -52,6 +52,10 @@ struct OverlaysPane: View {
                     model.set(["switcher-shows"], [$0.rawValue])
                 }
             }
+            SliderRow(title: "Size", detail: "How tall each window shows.", key: ["switcher-size"], value: c.switcherSize,
+                      range: 100...400, step: 10, format: { "\(Int($0)) pt" }, live: { $0.switcherSize = $1 })
+            ToggleRow(title: "Window names", detail: "The picked window's name under the row.", key: ["switcher-names"],
+                      isOn: c.switcherNames, on: ["on"], off: ["off"])
             Row(title: "Windows from", stacked: true) {
                 Choice(options: [("Everywhere", SwitcherWindows.everywhere), ("This display", .display), ("This workspace", .workspace)],
                        selected: c.switcherWindows) { model.set(["switcher-windows"], [$0.rawValue]) }

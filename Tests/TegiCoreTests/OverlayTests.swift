@@ -40,3 +40,11 @@ import Testing
     let d = Config.builtIn
     #expect(d.overviewGap == 0.1 && d.overviewWorkspaceRadius == 14 && d.overviewLabels && d.overviewIcons && d.overviewBackdrop == .wallpaper)
 }
+
+@Test func theSwitcherCanBeSizedAndLeaveOutNames() throws {
+    let c = try Config.parse("switcher-size 320\nswitcher-names off")
+    #expect(c.switcherSize == 320)
+    #expect(!c.switcherNames)
+    #expect(Config.builtIn.switcherSize == 220 && Config.builtIn.switcherNames)
+    #expect(throws: ConfigError.self) { try Config.parse("switcher-size 20") }
+}

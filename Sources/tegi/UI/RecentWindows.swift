@@ -129,7 +129,8 @@ private final class SwitcherPanel: NSPanel {
     private let model: SwitcherModel
 
     init(config: Config) {
-        model = SwitcherModel(ring: SwiftUI.Color(config.focusRingColor), mascot: config.switcherMascot, icons: config.switcherShows == .icons)
+        model = SwitcherModel(ring: SwiftUI.Color(config.focusRingColor), mascot: config.switcherMascot, icons: config.switcherShows == .icons,
+                              names: config.switcherNames, size: config.switcherSize)
         super.init(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         isOpaque = false
         backgroundColor = .clear
@@ -144,9 +145,9 @@ private final class SwitcherPanel: NSPanel {
         guard let screen = NSScreen.main else { return }
         let visible = screen.visibleFrame
         // One height for every tile, and widths kept between portrait and wide, so the row reads as even.
-        let tall = min(150, visible.height * 0.2)
+        let tall = min(model.size, visible.height * 0.3)
         var sizes = items.map { item -> CGSize in
-            if model.icons { return CGSize(width: 84, height: 84) }
+            if model.icons { return CGSize(width: tall * 0.6, height: tall * 0.6) }
             let aspect = min(max(item.size.width / max(item.size.height, 1), 0.75), 1.8)
             return CGSize(width: tall * aspect, height: tall)
         }
@@ -154,7 +155,7 @@ private final class SwitcherPanel: NSPanel {
         let fit = min(1, (visible.width * 0.92 - chrome) / max(sizes.reduce(0) { $0 + $1.width }, 1))
         sizes = sizes.map { CGSize(width: ($0.width * fit).rounded(), height: ($0.height * fit).rounded()) }
         let width = sizes.reduce(0) { $0 + $1.width } + chrome
-        let height = (sizes.map(\.height).max() ?? 0) + SwitcherView.pad * 2 + SwitcherView.label + (model.mascot ? SwitcherView.peek : 0)
+        let height = (sizes.map(\.height).max() ?? 0) + SwitcherView.pad * 2 + (model.names ? SwitcherView.label : 0) + (model.mascot ? SwitcherView.peek : 0)
         setFrame(CGRect(x: (visible.midX - width / 2).rounded(), y: (visible.midY - height / 2).rounded(), width: width, height: height), display: false)
         model.items = items
         model.sizes = sizes
@@ -167,14 +168,18 @@ private final class SwitcherModel: ObservableObject {
     let ring: SwiftUI.Color
     let mascot: Bool
     let icons: Bool
+    let names: Bool
+    let size: Double
     @Published var items: [RecentWindows.Item] = []
     @Published var sizes: [CGSize] = []
     @Published var selected = 0
 
-    init(ring: SwiftUI.Color, mascot: Bool, icons: Bool) {
+    init(ring: SwiftUI.Color, mascot: Bool, icons: Bool, names: Bool, size: Double) {
         self.ring = ring
         self.mascot = mascot
         self.icons = icons
+        self.names = names
+        self.size = size
     }
 }
 
@@ -203,12 +208,14 @@ private struct SwitcherView: View {
                             .matchedGeometryEffect(id: picked.id, in: tiles, isSource: false)
                     }
                 }
-                Text(picked.map { $0.title.isEmpty ? $0.app : $0.title } ?? "")
-                    .font(.system(size: 12.5, weight: .semibold, design: .rounded))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .frame(maxWidth: 420)
-                    .frame(height: Self.label - 10)
+                if model.names {
+                    Text(picked.map { $0.title.isEmpty ? $0.app : $0.title } ?? "")
+                        .font(.system(size: 13, weight: .semibold, design: .rounded))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .frame(maxWidth: 480)
+                        .frame(height: Self.label - 10)
+                }
             }
             .padding(Self.pad)
             .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
@@ -231,7 +238,8 @@ private struct SwitcherView: View {
                 ZStack {
                     SwiftUI.Color.primary.opacity(0.06)
                     if let icon = item.icon {
-                        Image(nsImage: icon).resizable().frame(width: model.icons ? 64 : 48, height: model.icons ? 64 : 48)
+                        let side = min(size.width, size.height) * (model.icons ? 0.75 : 0.35)
+                        Image(nsImage: icon).resizable().frame(width: side, height: side)
                     }
                 }
             }

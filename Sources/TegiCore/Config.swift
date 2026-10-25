@@ -163,6 +163,9 @@ public struct Config: Equatable {
     /// Seconds ⌥Tab is held before the switcher shows, so a quick tap switches without it flashing.
     public var switcherDelay = 0.15
     public var switcherMascot = false
+    /// The height of each window in the switcher, in points; a short screen caps it.
+    public var switcherSize = 220.0
+    public var switcherNames = true
     public var hotkeyOverlayAtStartup = AtStartup.firstTime
     public var threeFingerSwipe = true
     public var focusFollowsMouse: Double?
@@ -412,6 +415,14 @@ public struct Config: Equatable {
                 config.switcherWindows = v
             case "switcher-delay":
                 config.switcherDelay = try number(0...1, "switcher-delay is between 0 and 1 second")
+            case "switcher-size":
+                config.switcherSize = try number(80...400, "switcher-size is between 80 and 400 points")
+            case "switcher-names":
+                switch try one() {
+                case "on": config.switcherNames = true
+                case "off": config.switcherNames = false
+                default: throw fail("switcher-names is on or off")
+                }
             case "switcher-mascot":
                 switch try one() {
                 case "on": config.switcherMascot = true
@@ -580,10 +591,13 @@ public struct Config: Equatable {
     hot-corner top-left
 
     # The window switcher (next-window) shows window pictures or app icons,
-    # from everywhere, this display or this workspace. It waits this many
-    # seconds so a quick tap switches without it flashing.
+    # from everywhere, this display or this workspace, this many points tall,
+    # with the picked window's name under them. It waits this many seconds so
+    # a quick tap switches without it flashing.
     switcher-shows pictures
     switcher-windows everywhere
+    switcher-size 220
+    switcher-names on
     switcher-delay 0.15
     switcher-mascot off
 
