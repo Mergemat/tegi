@@ -3,10 +3,10 @@
 Scrollable tiling for macOS. Windows sit in columns on a strip that scrolls sideways, and opening a window never resizes the others. Each display has its own workspaces stacked vertically, with one empty workspace always at the bottom.
 
 ```sh
-./scripts/app.sh && open .build/tegi.app
+brew install mergemat/tap/tegi
 ```
 
-`tegi.app` asks for Accessibility access (to move windows) and Screen Recording access (for workspace slides and the overview). On first run it writes `~/.config/tegi/config` for your changes and shows the important hotkeys; every default, with what it does, is in `~/.config/tegi/defaults`. Saved changes apply right away, and a broken line keeps the last good config while a banner says which line.
+tegi starts right away and at every login. It asks for Accessibility access (to move windows) and Screen Recording access (for workspace slides and the overview). On first run it writes `~/.config/tegi/config` for your changes and shows the important hotkeys; every default, with what it does, is in `~/.config/tegi/defaults`. Saved changes apply right away, and a broken line keeps the last good config while a banner says which line.
 
 - Windows glide on springs when the strip scrolls, columns move or sizes change, and workspaces slide vertically.
 - Option+O, the top-left corner or a four-finger swipe up opens the overview: every workspace, zoomed out. Drag windows between workspaces there.
@@ -29,8 +29,15 @@ swift build                  # debug build
 swift test                   # layout, config and spring tests
 ./scripts/app.sh run         # build tegi.app, quit the running tegi, start the new one
 .build/release/tegi          # run in the terminal to see its output (permissions then go to the terminal)
+swift scripts/icon.swift     # redraw Resources/AppIcon.icns
 ```
 
 - `Sources/TegiCore` is the layout model, config parser and springs: plain Swift with no macOS window APIs, so it's what the tests cover.
 - `Sources/tegi` is the app. `WindowManager/` applies the model to real windows and animates them; `System/` wraps macOS (Accessibility, input, hotkeys, screen capture, the IPC socket); `UI/` is what tegi draws itself (overview and slides, focus ring, switcher, banners).
 - `tegi msg event-stream` and `tegi msg state` are the quickest way to see what tegi thinks the layout is.
+
+## Releasing
+
+`./scripts/release.sh 0.1.0` builds the universal app, zips it and renders the cask into `.build/dist`, without publishing anything. Pushing a `v0.1.0` tag runs the same script in CI, publishes the GitHub release and commits the cask to `Mergemat/homebrew-tap` (it needs the `HOMEBREW_TAP_DEPLOY_KEY` secret).
+
+Releases are signed ad hoc with a requirement pinned to the bundle ID, so permissions survive upgrades. With a Developer ID, set `SIGN_IDENTITY` and `NOTARY_PROFILE`: the app is then notarized, the cask no longer needs to clear the quarantine flag, and tegi can go to Homebrew's main cask repository for a plain `brew install tegi`.
