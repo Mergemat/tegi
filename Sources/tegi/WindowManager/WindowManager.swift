@@ -73,6 +73,7 @@ final class WindowManager {
     var overview = false
     var slideVelocity: Double?
     var wallpapers: [UInt32: IOSurface] = [:]
+    var papers: [UInt32: IOSurface] = [:]
     var warmup: DispatchWorkItem?
     var freshener: Timer?
     var freshTicks = 0

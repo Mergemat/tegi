@@ -96,7 +96,7 @@ extension WindowManager {
         let mon = world.monitors[m]
         if let scene = scenes[mon.id] { return scene }
         guard let screen = NSScreen.screens.first(where: { $0.displayID == mon.id }) else { return nil }
-        let scene = Scene(area: screen.visibleFrame, screen: screen.frame, wallpaper: wallpaper(screen), config: config)
+        let scene = Scene(area: screen.visibleFrame, screen: screen.frame, wallpaper: wallpaper(screen), paper: papers[screen.displayID], config: config)
         let display = mon.id
         func monitorIndex() -> Int? { world.monitors.firstIndex { $0.id == display } }
         scene.onFinished = { [weak self] in
@@ -276,10 +276,11 @@ extension WindowManager {
     }
 
     func refreshWallpapers() {
-        snapshots.captureWallpapers { [weak self] images in
+        snapshots.captureWallpapers { [weak self] images, papers in
             guard let self else { return }
             wallpapers.merge(images) { _, new in new }
-            for (display, image) in images { scenes[display]?.setWallpaper(image) }
+            self.papers.merge(papers) { _, new in new }
+            for (display, image) in images { scenes[display]?.setWallpaper(image, paper: papers[display]) }
         }
     }
 

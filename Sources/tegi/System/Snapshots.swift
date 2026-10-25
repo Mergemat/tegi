@@ -71,12 +71,13 @@ final class Snapshots {
     }
 
     // The desktop is several windows below the normal layer: wallpaper, icons and widgets.
-    func captureWallpapers(_ done: @escaping ([CGDirectDisplayID: IOSurface]) -> Void) {
+    /// Each display's desktop as it looks, icons and widgets too, and its bare wallpaper alone.
+    func captureWallpapers(_ done: @escaping (_ desktops: [CGDirectDisplayID: IOSurface], _ papers: [CGDirectDisplayID: IOSurface]) -> Void) {
         guard allowed else { return }
         let space = Self.displaySpace()
         Task {
             guard let content = try? await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true) else { return }
-            var out: [CGDirectDisplayID: IOSurface] = [:]
+            var out: [CGDirectDisplayID: IOSurface] = [:], papers: [CGDirectDisplayID: IOSurface] = [:]
             for display in content.displays {
                 let desktop = content.windows.filter { $0.windowLayer < 0 && $0.frame.intersects(display.frame) }
                 guard !desktop.isEmpty else { continue }
@@ -92,9 +93,19 @@ final class Snapshots {
                    let surface = Self.surface(image, space.space) {
                     out[display.displayID] = surface
                 }
+                // macOS draws the wallpaper in a window of its own beneath the icons. A quarter of the pixels is plenty to blur.
+                let paper = desktop.filter { $0.title == "Wallpaper" && $0.owningApplication?.bundleIdentifier == "com.apple.WindowManager" }
+                if !paper.isEmpty {
+                    config.width /= 4
+                    config.height /= 4
+                    if let image = try? await SCScreenshotManager.captureImage(contentFilter: SCContentFilter(display: display, including: paper), configuration: config),
+                       let surface = Self.surface(image, space.space) {
+                        papers[display.displayID] = surface
+                    }
+                }
             }
-            let images = out
-            await MainActor.run { done(images) }
+            let (desktops, bare) = (out, papers)
+            await MainActor.run { done(desktops, bare) }
         }
     }
 

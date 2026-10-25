@@ -59,7 +59,7 @@ final class Scene: NSObject {
     var onDrop: (_ id: WindowID, _ workspace: Int, _ point: CGPoint) -> Void = { _, _, _ in }
     var onDropBetween: (_ id: WindowID, _ index: Int) -> Void = { _, _ in }
 
-    init(area: CGRect, screen: CGRect, wallpaper: Any?, config: Config) {
+    init(area: CGRect, screen: CGRect, wallpaper: Any?, paper: IOSurface?, config: Config) {
         size = area.size
         self.wallpaper = wallpaper
         wallpaperFrame = CGRect(x: screen.minX - area.minX, y: screen.minY - area.minY, width: screen.width, height: screen.height)
@@ -86,7 +86,8 @@ final class Scene: NSObject {
         root.backgroundColor = cgColor(config.backdropColor)
         backdrop.frame = wallpaperFrame
         backdrop.contentsGravity = .resizeAspectFill
-        backdrop.contents = backdropImage(wallpaper)
+        // The bare wallpaper: the desktop capture also holds icons and widgets, right for an empty workspace but not behind them.
+        backdrop.contents = backdropImage(paper ?? wallpaper)
         // Workspaces are inserted by index from the bottom, so the backdrop keeps behind them by depth, not order.
         backdrop.zPosition = -1
         // Dimmed over black: darkening the picture itself crushes a dark wallpaper's shadows.
@@ -112,19 +113,19 @@ final class Scene: NSObject {
 
     var isVisible: Bool { !root.isHidden }
 
-    func setWallpaper(_ image: Any?) {
+    func setWallpaper(_ image: Any?, paper: IOSurface?) {
         wallpaper = image
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         for ws in workspaces { ws.paper.contents = image }
-        backdrop.contents = backdropImage(image)
+        backdrop.contents = backdropImage(paper ?? image)
         CATransaction.commit()
     }
     var currentIndex: Double { index.value(at: CACurrentMediaTime()) }
 
     private static let blur = CIContext()
 
-    // Blurred small: a quarter of the pixels is plenty for a blur, and keeps a new wallpaper cheap.
+    // Blurred small: a few hundred pixels are plenty for a blur, and keep a new wallpaper cheap.
     private func backdropImage(_ wallpaper: Any?) -> CGImage? {
         guard config.overviewBackdrop == .wallpaper, let wallpaper else { return nil }
         let image: CIImage
@@ -135,7 +136,9 @@ final class Scene: NSObject {
         } else {
             return nil
         }
-        let small = image.transformed(by: CGAffineTransform(scaleX: 0.25, y: 0.25))
+        // About 900 pixels across, whatever size it came in, so the blur looks the same.
+        let k = min(1, 900 / max(image.extent.width, 1))
+        let small = image.transformed(by: CGAffineTransform(scaleX: k, y: k))
         let soft = small.clampedToExtent().applyingGaussianBlur(sigma: 6).cropped(to: small.extent)
         return Self.blur.createCGImage(soft, from: small.extent)
     }
