@@ -33,6 +33,20 @@ final class Snapshots {
         return surface
     }
 
+    private static func surface(_ image: CGImage, _ space: CGColorSpace) -> IOSurface? {
+        let w = image.width, h = image.height
+        guard let surface = IOSurface(properties: [.width: w, .height: h, .bytesPerElement: 4,
+                                                   .pixelFormat: kCVPixelFormatType_32BGRA]) else { return nil }
+        surface.lock(options: [], seed: nil)
+        defer { surface.unlock(options: [], seed: nil) }
+        let info = CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue
+        guard let context = CGContext(data: surface.baseAddress, width: w, height: h, bitsPerComponent: 8,
+                                      bytesPerRow: surface.bytesPerRow, space: space, bitmapInfo: info) else { return nil }
+        context.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
+        if let list = space.copyPropertyList() { IOSurfaceSetValue(surface, kIOSurfaceColorSpace, list) }
+        return surface
+    }
+
     private static func displaySpace() -> (space: CGColorSpace, name: CFString) {
         let space = NSScreen.main?.colorSpace?.cgColorSpace ?? CGColorSpace(name: CGColorSpace.sRGB)!
         if let name = space.name { return (space, name) }
@@ -54,7 +68,11 @@ final class Snapshots {
                 config.width = Int(display.frame.width * scale)
                 config.height = Int(display.frame.height * scale)
                 config.showsCursor = false
-                if let surface = await Self.surface(SCContentFilter(display: display, including: desktop), config, space) {
+                config.colorSpaceName = space.name
+                // The sample-buffer capture leaves out Finder's desktop icons; the image capture keeps them.
+                let filter = SCContentFilter(display: display, including: desktop)
+                if let image = try? await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config),
+                   let surface = Self.surface(image, space.space) {
                     out[display.displayID] = surface
                 }
             }
