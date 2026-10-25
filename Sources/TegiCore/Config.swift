@@ -115,7 +115,7 @@ public enum Corner: String, CaseIterable {
 }
 
 public enum OverviewBackdrop: String, CaseIterable { case wallpaper, color }
-public enum SwitcherShows: String, CaseIterable { case pictures, icons }
+public enum SwitcherShows: String, CaseIterable { case pictures, icons, both }
 public enum SwitcherWindows: String, CaseIterable { case everywhere, display, workspace }
 public enum AtStartup: String, CaseIterable { case firstTime = "first-time", always, never }
 
@@ -408,7 +408,7 @@ public struct Config: Equatable {
                 guard let v = OverviewBackdrop(rawValue: try one()) else { throw fail("overview-backdrop is wallpaper or color") }
                 config.overviewBackdrop = v
             case "switcher-shows":
-                guard let v = SwitcherShows(rawValue: try one()) else { throw fail("switcher-shows is pictures or icons") }
+                guard let v = SwitcherShows(rawValue: try one()) else { throw fail("switcher-shows is pictures, icons or both") }
                 config.switcherShows = v
             case "switcher-windows":
                 guard let v = SwitcherWindows(rawValue: try one()) else { throw fail("switcher-windows is everywhere, display or workspace") }
@@ -590,7 +590,7 @@ public struct Config: Equatable {
     backdrop-color #262626
     hot-corner top-left
 
-    # The window switcher (next-window) shows window pictures or app icons,
+    # The window switcher (next-window) shows window pictures, app icons or both,
     # from everywhere, this display or this workspace, this many points tall,
     # with the picked window's name under them. It waits this many seconds so
     # a quick tap switches without it flashing.

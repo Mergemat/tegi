@@ -48,3 +48,7 @@ import Testing
     #expect(Config.builtIn.switcherSize == 220 && Config.builtIn.switcherNames)
     #expect(throws: ConfigError.self) { try Config.parse("switcher-size 20") }
 }
+
+@Test func theSwitcherCanShowPicturesWithTheirAppIcons() throws {
+    #expect(try Config.parse("switcher-shows both").switcherShows == .both)
+}

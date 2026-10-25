@@ -44,11 +44,11 @@ struct OverlaysPane: View {
 
         CardTitle("Window switcher")
         Card {
-            SwitcherArt(icons: c.switcherShows == .icons, mascot: c.switcherMascot, ring: SwiftUI.Color(c.focusRingColor))
+            SwitcherArt(shows: c.switcherShows, mascot: c.switcherMascot, ring: SwiftUI.Color(c.focusRingColor))
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, Space.card)
             Row(title: "Shows", stacked: true) {
-                Choice(options: [("Window pictures", SwitcherShows.pictures), ("App icons", .icons)], selected: c.switcherShows) {
+                Choice(options: [("Window pictures", SwitcherShows.pictures), ("Pictures and icons", .both), ("App icons", .icons)], selected: c.switcherShows) {
                     model.set(["switcher-shows"], [$0.rawValue])
                 }
             }
@@ -82,9 +82,10 @@ struct OverlaysPane: View {
 /// The switcher in miniature, following the settings: pictures or icons, and the mascot when it peeks.
 private struct SwitcherArt: View {
     @Environment(\.colorScheme) private var scheme
-    let icons: Bool
+    let shows: SwitcherShows
     let mascot: Bool
     let ring: SwiftUI.Color
+    private var icons: Bool { shows == .icons }
 
     var body: some View {
         ZStack(alignment: .top) {
@@ -98,7 +99,7 @@ private struct SwitcherArt: View {
             .background(Theme(scheme).chip, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             .padding(.top, 13)
         }
-        .animation(.spring(duration: 0.3, bounce: 0.3), value: icons)
+        .animation(.spring(duration: 0.3, bounce: 0.3), value: shows)
         .animation(.spring(duration: 0.3, bounce: 0.3), value: mascot)
     }
 
@@ -111,6 +112,14 @@ private struct SwitcherArt: View {
                     .padding(6)
             } else {
                 Friend(radius: 5, face: false).frame(width: 52, height: 38)
+                    .overlay(alignment: .bottomLeading) {
+                        if shows == .both {
+                            RoundedRectangle(cornerRadius: 3, style: .continuous)
+                                .fill(LinearGradient(colors: [SwiftUI.Color(hex: 0x8fd0ff), SwiftUI.Color(hex: 0x5aa8ff)], startPoint: .top, endPoint: .bottom))
+                                .frame(width: 12, height: 12)
+                                .padding(4)
+                        }
+                    }
             }
         }
         .overlay {

@@ -130,7 +130,7 @@ private final class SwitcherPanel: NSPanel {
 
     init(config: Config) {
         model = SwitcherModel(ring: SwiftUI.Color(config.focusRingColor), mascot: config.switcherMascot, icons: config.switcherShows == .icons,
-                              names: config.switcherNames, size: config.switcherSize)
+                              badges: config.switcherShows == .both, names: config.switcherNames, size: config.switcherSize)
         super.init(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         isOpaque = false
         backgroundColor = .clear
@@ -168,16 +168,18 @@ private final class SwitcherModel: ObservableObject {
     let ring: SwiftUI.Color
     let mascot: Bool
     let icons: Bool
+    let badges: Bool
     let names: Bool
     let size: Double
     @Published var items: [RecentWindows.Item] = []
     @Published var sizes: [CGSize] = []
     @Published var selected = 0
 
-    init(ring: SwiftUI.Color, mascot: Bool, icons: Bool, names: Bool, size: Double) {
+    init(ring: SwiftUI.Color, mascot: Bool, icons: Bool, badges: Bool, names: Bool, size: Double) {
         self.ring = ring
         self.mascot = mascot
         self.icons = icons
+        self.badges = badges
         self.names = names
         self.size = size
     }
@@ -246,6 +248,14 @@ private struct SwitcherView: View {
         }
         .frame(width: size.width, height: size.height)
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(alignment: .bottomLeading) {
+            if model.badges, item.image != nil, let icon = item.icon {
+                let side = max(24, size.height * 0.22)
+                Image(nsImage: icon).resizable().frame(width: side, height: side)
+                    .shadow(color: .black.opacity(0.3), radius: 3, y: 1)
+                    .padding(side * 0.25)
+            }
+        }
     }
 }
 
