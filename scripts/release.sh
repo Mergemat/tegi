@@ -1,5 +1,6 @@
 #!/bin/sh
-# Packages a release locally; publishing stays a manual step it prints at the end.
+# Packages a release into .build/dist: the zip and the cask for Mergemat/homebrew-tap.
+# CI runs this on a version tag and publishes the result; locally it only builds.
 #
 #   ./scripts/release.sh 0.1.0
 #
@@ -10,8 +11,6 @@ set -e
 cd "$(dirname "$0")/.."
 
 version=$1
-repo=mergemat/tegi
-bundle_id=io.github.mergemat.tegi
 case "$version" in
     [0-9]*.[0-9]*.[0-9]*) ;;
     *) echo "usage: $0 <version>, like 0.1.0" >&2; exit 1 ;;
@@ -35,42 +34,7 @@ fi
 ditto -c -k --keepParent .build/tegi.app "$zip"
 sha=$(shasum -a 256 "$zip" | cut -d' ' -f1)
 
-# Until releases are notarized, Gatekeeper would refuse the download; the tap clears the flag.
-quarantine=""
-if [ -z "$NOTARY_PROFILE" ]; then
-    quarantine='    system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{appdir}/tegi.app"]
-'
-fi
-
-cat > "$dist/tegi.rb" <<CASK
-cask "tegi" do
-  version "$version"
-  sha256 "$sha"
-
-  url "https://github.com/$repo/releases/download/v#{version}/tegi-#{version}.zip"
-  name "tegi"
-  desc "Scrollable tiling window manager"
-  homepage "https://github.com/$repo"
-
-  depends_on macos: ">= :sonoma"
-
-  app "tegi.app"
-  binary "#{appdir}/tegi.app/Contents/MacOS/tegi"
-
-  postflight do
-${quarantine}    system_command "/usr/bin/open", args: ["#{appdir}/tegi.app"]
-  end
-
-  uninstall quit: "$bundle_id"
-
-  zap trash: "~/.config/tegi"
-
-  caveats <<~EOS
-    tegi asks for Accessibility (to move windows) and Screen Recording (for
-    workspace slides and the overview) on first launch, and starts at login.
-  EOS
-end
-CASK
+sed -e "s/@VERSION@/$version/g" -e "s/@SHA256@/$sha/g" packaging/homebrew/tegi.rb > "$dist/tegi.rb"
 
 cat <<DONE
 
@@ -78,8 +42,6 @@ Built $zip
   sha256 $sha
 Wrote $dist/tegi.rb
 
-Nothing is published. To release:
+Nothing is published. Pushing the tag does the rest in CI:
   git tag v$version && git push origin v$version
-  gh release create v$version $zip --repo $repo --title v$version --generate-notes
-  cp $dist/tegi.rb <homebrew-tap>/Casks/tegi.rb, commit and push
 DONE

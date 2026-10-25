@@ -1,0 +1,48 @@
+name: release
+
+# Push a tag like v0.1.0 to publish tegi-0.1.0.zip and update the Homebrew cask
+# in Mergemat/homebrew-tap. HOMEBREW_TAP_DEPLOY_KEY is the private half of a
+# deploy key that can write to that one repository.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Build
+        run: ./scripts/release.sh "${GITHUB_REF_NAME#v}"
+
+      - name: Publish the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          v="${GITHUB_REF_NAME#v}"
+          gh release create "$GITHUB_REF_NAME" ".build/dist/tegi-$v.zip" \
+            --title "tegi $v" --generate-notes
+
+      - name: Update the Homebrew cask
+        env:
+          DEPLOY_KEY: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
+        if: env.DEPLOY_KEY != ''
+        run: |
+          v="${GITHUB_REF_NAME#v}"
+          key="$RUNNER_TEMP/tap_key"
+          printf '%s\n' "$DEPLOY_KEY" > "$key"
+          chmod 600 "$key"
+          export GIT_SSH_COMMAND="ssh -i $key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
+          git clone git@github.com:Mergemat/homebrew-tap.git tap
+          mkdir -p tap/Casks
+          cp .build/dist/tegi.rb tap/Casks/tegi.rb
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Casks/tegi.rb
+          git commit -m "tegi $v"
+          git push
