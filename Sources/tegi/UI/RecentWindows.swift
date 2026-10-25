@@ -1,5 +1,5 @@
 import AppKit
-import QuartzCore
+import SwiftUI
 import TegiCore
 
 final class RecentWindows {
@@ -15,7 +15,7 @@ final class RecentWindows {
     var onCommit: (WindowID) -> Void = { _ in }
     private var order: [WindowID] = []
     private var pending: DispatchWorkItem?
-    private var session: (items: [Item], selected: Int, modifiers: NSEvent.ModifierFlags)?
+    private var session: (items: [Item], selected: Int, modifiers: NSEvent.ModifierFlags, ring: TegiCore.Color)?
     private var panel: SwitcherPanel?
     private var monitors: [Any] = []
 
@@ -44,7 +44,7 @@ final class RecentWindows {
         order.first { $0 != current && ids.contains($0) }
     }
 
-    func open(_ items: [Item], forward: Bool) {
+    func open(_ items: [Item], forward: Bool, ring: TegiCore.Color) {
         guard items.count > 1 else { return }
         let held = NSEvent.modifierFlags.intersection([.option, .command, .control, .shift])
         guard !held.isEmpty else {
@@ -52,7 +52,7 @@ final class RecentWindows {
             commit(id)
             return onCommit(id)
         }
-        session = (items, forward ? 1 : items.count - 1, held)
+        session = (items, forward ? 1 : items.count - 1, held, ring)
         let flags = NSEvent.addGlobalMonitorForEvents(matching: .flagsChanged) { [weak self] _ in self?.modifiersChanged() }
         let local = NSEvent.addLocalMonitorForEvents(matching: [.flagsChanged, .keyDown]) { [weak self] e in
             guard let self else { return e }
@@ -62,7 +62,7 @@ final class RecentWindows {
         monitors = [flags, local].compactMap { $0 }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
             guard let self, let s = session else { return }
-            let panel = SwitcherPanel()
+            let panel = SwitcherPanel(ring: s.ring)
             panel.show(s.items, selected: s.selected)
             self.panel = panel
         }
@@ -126,93 +126,151 @@ final class RecentWindows {
 }
 
 private final class SwitcherPanel: NSPanel {
-    private let root = CALayer()
-    private let label = CATextLayer()
+    private let model: SwitcherModel
 
-    init() {
+    init(ring: TegiCore.Color) {
+        model = SwitcherModel(ring: SwiftUI.Color(ring))
         super.init(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         isOpaque = false
         backgroundColor = .clear
-        hasShadow = true
+        hasShadow = false
         animationBehavior = .none
         level = .modalPanel
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        let view = NSView()
-        view.wantsLayer = true
-        view.layer?.addSublayer(root)
-        contentView = view
-        root.backgroundColor = CGColor(gray: 0.12, alpha: 0.96)
-        root.cornerRadius = 16
-        root.borderWidth = 1
-        root.borderColor = CGColor(gray: 1, alpha: 0.1)
-        label.fontSize = 14
-        label.font = NSFont.systemFont(ofSize: 14, weight: .medium)
-        label.foregroundColor = CGColor(gray: 0.95, alpha: 1)
-        label.alignmentMode = .center
-        label.truncationMode = .end
+        contentView = NSHostingView(rootView: SwitcherView(model: model))
     }
 
     func show(_ items: [RecentWindows.Item], selected: Int) {
         guard let screen = NSScreen.main else { return }
-        label.contentsScale = screen.backingScaleFactor
         let visible = screen.visibleFrame
-        let maxHeight = min(480, visible.height * 0.5)
+        let maxHeight = min(420, visible.height * 0.45)
         var sizes = items.map { item -> CGSize in
             let scale = min(0.5, maxHeight / max(item.size.height, 1))
             return CGSize(width: item.size.width * scale, height: item.size.height * scale)
         }
-        let pad = 16.0, spacing = 20.0
-        let total = sizes.reduce(0) { $0 + $1.width } + spacing * Double(max(items.count - 1, 0)) + pad * 4
-        let fit = min(1, visible.width * 0.92 / total)
+        let chrome = SwitcherView.pad * 2 + SwitcherView.spacing * Double(max(items.count - 1, 0))
+        let fit = min(1, (visible.width * 0.92 - chrome) / max(sizes.reduce(0) { $0 + $1.width }, 1))
         sizes = sizes.map { CGSize(width: ($0.width * fit).rounded(), height: ($0.height * fit).rounded()) }
-        let rowHeight = sizes.map(\.height).max() ?? 0
-        let width = sizes.reduce(0) { $0 + $1.width } + spacing * Double(max(items.count - 1, 0)) + pad * 4
-        let height = rowHeight + pad * 4 + 34
+        let width = sizes.reduce(0) { $0 + $1.width } + chrome
+        let height = (sizes.map(\.height).max() ?? 0) + SwitcherView.pad * 2 + SwitcherView.label + SwitcherView.peek
         setFrame(CGRect(x: (visible.midX - width / 2).rounded(), y: (visible.midY - height / 2).rounded(), width: width, height: height), display: false)
+        let first = model.items.isEmpty
+        model.items = items
+        model.sizes = sizes
+        if first {
+            model.selected = selected
+        } else {
+            withAnimation(.spring(duration: 0.28, bounce: 0.3)) { model.selected = selected }
+        }
+        if !isVisible { orderFrontRegardless() }
+    }
+}
 
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        root.frame = CGRect(x: 0, y: 0, width: width, height: height)
-        root.sublayers?.forEach { $0.removeFromSuperlayer() }
-        var x = pad * 2
-        for (i, item) in items.enumerated() {
-            let size = sizes[i]
-            let frame = CGRect(x: x, y: pad * 2 + 34 + (rowHeight - size.height) / 2, width: size.width, height: size.height)
-            if i == selected {
-                let highlight = CALayer()
-                highlight.frame = frame.insetBy(dx: -pad, dy: -pad)
-                highlight.backgroundColor = cgColor(Color(hex: "#999999ff")!)
-                highlight.cornerRadius = 12
-                root.addSublayer(highlight)
+private final class SwitcherModel: ObservableObject {
+    let ring: SwiftUI.Color
+    @Published var items: [RecentWindows.Item] = []
+    @Published var sizes: [CGSize] = []
+    @Published var selected = 0
+
+    init(ring: SwiftUI.Color) { self.ring = ring }
+}
+
+/// The recent windows as a row of pictures; the picked one wears the focus ring, and the mascot peeks over the top.
+private struct SwitcherView: View {
+    static let pad = 26.0, spacing = 18.0, label = 44.0, peek = 30.0
+    @ObservedObject var model: SwitcherModel
+    @Environment(\.colorScheme) private var scheme
+
+    var body: some View {
+        let t = Theme(scheme)
+        ZStack(alignment: .topLeading) {
+            Mascot(ringWidth: 0, radius: 10).frame(width: 44, height: 52).offset(x: mascotX - 22, y: 0)
+            VStack(spacing: 14) {
+                HStack(alignment: .center, spacing: Self.spacing) {
+                    ForEach(Array(model.items.enumerated()), id: \.element.id) { i, item in
+                        thumb(item, size: model.sizes.indices.contains(i) ? model.sizes[i] : .zero, picked: i == model.selected)
+                    }
+                }
+                if model.items.indices.contains(model.selected) { name(model.items[model.selected], t) }
             }
-            let preview = CALayer()
-            preview.frame = frame
-            preview.cornerRadius = 10
-            preview.masksToBounds = true
-            if let image = item.image {
-                preview.contents = image
-                preview.contentsGravity = .resizeAspect
-            } else {
-                preview.backgroundColor = CGColor(gray: 0.3, alpha: 1)
-                if let icon = item.icon {
-                    let l = CALayer()
-                    l.contents = icon
-                    l.contentsGravity = .resizeAspect
-                    let side = min(64, size.width * 0.5, size.height * 0.5)
-                    l.frame = CGRect(x: (size.width - side) / 2, y: (size.height - side) / 2, width: side, height: side)
-                    preview.addSublayer(l)
+            .padding(Self.pad)
+            .background {
+                ZStack {
+                    t.background
+                    if t.night { Stars() }
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
+            }
+            .overlay(RoundedRectangle(cornerRadius: 28, style: .continuous).strokeBorder(t.night ? SwiftUI.Color.white.opacity(0.14) : t.edge))
+            .shadow(color: .black.opacity(0.35), radius: 20, y: 8)
+            .padding(.top, Self.peek)
+        }
+    }
+
+    // Above the middle of the picked window, so the mascot moves along as you step.
+    private var mascotX: Double {
+        let before = model.sizes.prefix(model.selected).reduce(0) { $0 + $1.width + Self.spacing }
+        let width = model.sizes.indices.contains(model.selected) ? model.sizes[model.selected].width : 0
+        return Self.pad + before + width / 2
+    }
+
+    private func thumb(_ item: RecentWindows.Item, size: CGSize, picked: Bool) -> some View {
+        ZStack(alignment: .bottomLeading) {
+            Group {
+                if let image = item.image {
+                    Surface(image: image)
+                } else {
+                    ZStack {
+                        Theme(scheme).chip
+                        if let icon = item.icon { Image(nsImage: icon).resizable().frame(width: 56, height: 56) }
+                    }
                 }
             }
-            root.addSublayer(preview)
-            x += size.width + spacing
+            .frame(width: size.width, height: size.height)
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            if let icon = item.icon, item.image != nil {
+                Image(nsImage: icon).resizable().frame(width: 32, height: 32)
+                    .shadow(color: .black.opacity(0.3), radius: 3, y: 2)
+                    .offset(x: -8, y: 8)
+            }
         }
-        if items.indices.contains(selected) {
-            let item = items[selected]
-            label.string = item.title.isEmpty ? item.app : "\(item.title) — \(item.app)"
+        .overlay {
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .strokeBorder(model.ring, lineWidth: 3.5)
+                .padding(-6)
+                .shadow(color: model.ring.opacity(0.6), radius: 8)
+                .opacity(picked ? 1 : 0)
         }
-        label.frame = CGRect(x: pad, y: pad, width: width - pad * 2, height: 20)
-        root.addSublayer(label)
-        CATransaction.commit()
-        if !isVisible { orderFrontRegardless() }
+        .scaleEffect(picked ? 1 : 0.92)
+        .opacity(picked ? 1 : 0.7)
+    }
+
+    private func name(_ item: RecentWindows.Item, _ t: Theme) -> some View {
+        HStack(spacing: 8) {
+            if let icon = item.icon { Image(nsImage: icon).resizable().frame(width: 18, height: 18) }
+            Text(item.title.isEmpty ? item.app : item.title).foregroundStyle(t.text).lineLimit(1)
+            if !item.title.isEmpty { Text(item.app).foregroundStyle(t.secondary).lineLimit(1).layoutPriority(1) }
+        }
+        .font(.system(size: 13, weight: .semibold, design: .rounded))
+        .padding(.horizontal, 14)
+        .frame(height: 30)
+        .background(t.chip, in: Capsule())
+        .frame(height: Self.label - 14)
+    }
+}
+
+/// A window picture straight from its surface: no CGImage copy, so stepping through stays instant.
+private struct Surface: NSViewRepresentable {
+    let image: IOSurface
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        view.wantsLayer = true
+        view.layer?.contentsGravity = .resizeAspectFill
+        return view
+    }
+
+    func updateNSView(_ view: NSView, context: Context) {
+        if view.layer?.contents as AnyObject? !== image { view.layer?.contents = image }
     }
 }

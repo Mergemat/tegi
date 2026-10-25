@@ -150,7 +150,7 @@ extension WindowManager {
             let size = applied[id]?.size ?? win.floatFrame?.size ?? CGSize(width: 800, height: 600)
             return RecentWindows.Item(id: id, title: win.title, app: win.worker.name, image: snapshots.images[id], icon: win.worker.icon, size: size)
         }
-        recent.open(items, forward: forward)
+        recent.open(items, forward: forward, ring: config.focusRingColor)
         let list = ids.compactMap { id in wins[id].map { (id: id, windowID: $0.windowID) } }
         snapshots.refresh(list, scale: NSScreen.main?.backingScaleFactor ?? 2) { [weak self] id in
             guard let self, let image = snapshots.images[id] else { return }
