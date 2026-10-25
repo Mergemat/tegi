@@ -7,7 +7,7 @@ private func points(_ v: Double) -> String { "\(Int(v.rounded())) pt" }
 
 extension Config {
     func keys(for command: Command) -> String? {
-        binds.filter { $0.value == command }.map(\.key.symbol).sorted().first
+        binds.filter { $0.value == command }.map { $0.key.symbol(hyper: mod) }.sorted().first
     }
 }
 

@@ -44,3 +44,19 @@ import Testing
     #expect(c.binds[KeyCombo("hyper+t")!] == .spawn(["open", "-a", "Terminal"]))
     #expect(c.binds[KeyCombo("cmd+t")!] == .spawn(["open", "-a", "Safari"]))
 }
+
+@Test func aHyperWithoutShiftTakesTheWindowAlongWithShift() throws {
+    // Raycast, Tinycast and Hyperkey send ⌃⌥⌘ unless their Include Shift is on.
+    let c = try Config.parse("mod ctrl+alt+cmd")
+    #expect(c.binds[KeyCombo("ctrl+alt+cmd+h")!] == .focusColumnLeft)
+    #expect(c.binds[KeyCombo("hyper+h")!] == .moveColumnLeft)
+}
+
+@Test func shortcutsOnAHyperShowItAsOneKey() {
+    let plain = Mods([.ctrl, .alt, .cmd])
+    #expect(KeyCombo("ctrl+alt+cmd+h")!.symbol(hyper: plain) == "✦H")
+    #expect(KeyCombo("hyper+h")!.symbol(hyper: plain) == "✦⇧H")
+    #expect(KeyCombo("hyper+h")!.symbol(hyper: .hyper) == "✦H")
+    #expect(KeyCombo("ctrl+alt+cmd+h")!.symbol(hyper: .hyper) == "⌃⌥⌘H")
+    #expect(KeyCombo("alt+h")!.symbol(hyper: .alt) == "⌥H")
+}

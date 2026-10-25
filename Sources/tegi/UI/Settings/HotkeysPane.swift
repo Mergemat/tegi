@@ -107,11 +107,24 @@ struct HotkeysPane: View {
         CardTitle("Your key")
         VStack(alignment: .leading, spacing: 8) {
             ModPicker(mod: mod) { model.setMod($0) }
-            Text(mod.contains(.shift)
-                 ? "Hyper is ⌃⌥⇧⌘ at once, usually Caps Lock through Karabiner-Elements or Hyperkey. It already holds Shift, so ⌥⇧ takes the window along."
-                 : "Every shortcut on it moves when you pick another.")
-                .font(.system(size: 11.5, design: .rounded)).foregroundStyle(t.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+            if mod == .hyper || mod == .hyperWithoutShift {
+                HStack(spacing: 12) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("My Hyper key includes ⇧").font(.system(size: 13, weight: .semibold, design: .rounded)).foregroundStyle(t.text)
+                        Text("Match Include Shift in Raycast, Tinycast or Hyperkey; it's off there unless you turned it on. Karabiner's usual Hyper includes it.")
+                            .font(.system(size: 11.5, design: .rounded)).foregroundStyle(t.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer(minLength: 0)
+                    GummyToggle(isOn: mod == .hyper) { model.setMod($0 ? .hyper : .hyperWithoutShift) }
+                }
+                .padding(.horizontal, Space.card).padding(.vertical, 12)
+                .background(t.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(t.edge))
+            } else {
+                Text("Every shortcut on it moves when you pick another.")
+                    .font(.system(size: 11.5, design: .rounded)).foregroundStyle(t.secondary)
+            }
         }
         .padding(.horizontal, 16)
         .padding(.bottom, 22)
@@ -132,7 +145,7 @@ struct HotkeysPane: View {
         let query = search.lowercased()
         if !query.isEmpty {
             let found = everything.filter { c in
-                title(of: c).lowercased().contains(query) || keys(c).contains { $0.symbol.lowercased().contains(query) || $0.description.contains(query) }
+                title(of: c).lowercased().contains(query) || keys(c).contains { $0.symbol(hyper: model.config.mod).lowercased().contains(query) || $0.description.contains(query) }
             }
             Card {
                 if found.isEmpty { Row(title: "Nothing matches", last: true) { EmptyView() } }
@@ -143,7 +156,7 @@ struct HotkeysPane: View {
         } else {
             CardTitle("Getting around")
             Card {
-                AroundMap(key: { keys($0).first }, lit: lit, take: Mods.shift.under(mod))
+                AroundMap(key: { keys($0).first }, lit: lit, mod: mod)
                     .padding(Space.card)
                 Rectangle().fill(t.divider).frame(height: 1)
                 pairHeader
@@ -244,7 +257,7 @@ struct HotkeysPane: View {
     @ViewBuilder private func summary(_ keys: [[KeyCombo]]) -> some View {
         let singles = keys.compactMap { $0.count == 1 ? $0[0] : nil }
         if singles.count == 9, Set(singles.map(\.mods)).count == 1, singles.enumerated().allSatisfy({ $1.key == "\($0 + 1)" }) {
-            KeyCap(text: String(singles[0].symbol.dropLast()) + "1–9")
+            KeyCap(text: String(singles[0].symbol(hyper: model.config.mod).dropLast()) + "1–9")
         } else {
             Text("\(keys.filter { !$0.isEmpty }.count) of 9 set").font(.system(size: 12, weight: .semibold, design: .rounded))
                 .foregroundStyle(Theme(scheme).faint)
@@ -254,7 +267,7 @@ struct HotkeysPane: View {
     private func shortcuts(_ command: Command) -> some View {
         HStack(spacing: 6) {
             ForEach(keys(command), id: \.description) { combo in
-                KeyCap(text: combo.symbol, live: recording == Recording(command: command, old: combo))
+                KeyCap(text: combo.symbol(hyper: model.config.mod), live: recording == Recording(command: command, old: combo))
                     .onTapGesture { record(command, replacing: combo) }
                     .contextMenu {
                         Button("Add another shortcut") { record(command, replacing: nil) }
@@ -324,7 +337,7 @@ struct HotkeysPane: View {
             return
         }
         if let taken = model.config.binds[combo], taken != r.command {
-            note = "\(combo.symbol) was \(title(of: taken)); now it's \(title(of: r.command))."
+            note = "\(combo.symbol(hyper: model.config.mod)) was \(title(of: taken)); now it's \(title(of: r.command))."
         } else {
             note = nil
         }
@@ -338,7 +351,7 @@ private struct AroundMap: View {
     @Environment(\.colorScheme) private var scheme
     let key: (Command) -> KeyCombo?
     let lit: Command?
-    let take: Mods
+    let mod: Mods
 
     var body: some View {
         let t = Theme(scheme)
@@ -365,9 +378,15 @@ private struct AroundMap: View {
             }
             // As wide as the strip, so the workspaces above and below line up with it.
             .fixedSize(horizontal: true, vertical: false)
-            SceneCaption("Add \(take == .shift ? "⇧" : take.symbol) to any of these and the window comes along")
+            SceneCaption("\(added) to any of these and the window comes along")
         }
         .frame(maxWidth: .infinity)
+    }
+
+    // A key without Shift adds it; one that already holds Shift moves to ⌥⇧.
+    private var added: String {
+        let take = Mods.shift.under(mod)
+        return take.isSuperset(of: mod) ? "Add ⇧" : "Use \(take.symbol)"
     }
 
     private var dots: some View {
@@ -382,7 +401,7 @@ private struct AroundMap: View {
                 .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(on ? tegiBlue : .clear, lineWidth: 2.5))
                 .shadow(color: on ? tegiBlue.opacity(0.6) : .clear, radius: 8)
             if let combo = key(command) {
-                KeyCap(text: combo.symbol).scaleEffect(on ? 1.1 : 1)
+                KeyCap(text: combo.symbol(hyper: mod)).scaleEffect(on ? 1.1 : 1)
                     .frame(maxHeight: .infinity, alignment: height == nil ? .bottom : .center)
                     .padding(.bottom, height == nil ? 8 : 0)
             }
@@ -401,7 +420,7 @@ private struct AroundMap: View {
                 .frame(height: 30)
             if let combo = key(command) {
                 HStack(spacing: 6) {
-                    KeyCap(text: combo.symbol)
+                    KeyCap(text: combo.symbol(hyper: mod))
                     Text(command == .focusWorkspaceUp ? "workspace above" : "workspace below")
                         .font(.system(size: 11, weight: .semibold, design: .rounded)).foregroundStyle(t.secondary)
                 }
@@ -421,16 +440,20 @@ struct ModPicker: View {
     let mod: Mods
     let pick: (Mods) -> Void
 
-    private static let options: [(Mods, String)] = [(.alt, "Option"), ([.ctrl, .alt], "Control Option"), ([.cmd, .alt], "Command Option"), (.hyper, "Hyper")]
+    private static let options: [(Mods, String)] = [(.alt, "Option"), ([.ctrl, .alt], "Control Option"), ([.cmd, .alt], "Command Option"),
+                                                     (.hyperWithoutShift, "Hyper")]
+
+    // Either kind of Hyper lights the Hyper tile; the toggle below it says which.
+    private func picked(_ option: Mods) -> Bool { option == mod || (option == .hyperWithoutShift && mod == .hyper) }
 
     var body: some View {
         let t = Theme(scheme)
-        let options = Self.options.contains { $0.0 == mod } ? Self.options : Self.options + [(mod, "Yours")]
+        let options = Self.options.contains { picked($0.0) } ? Self.options : Self.options + [(mod, "Yours")]
         HStack(spacing: 8) {
             ForEach(options, id: \.0.rawValue) { option, name in
-                let on = option == mod
+                let on = picked(option)
                 VStack(spacing: 3) {
-                    Text(option.symbol).font(.system(size: 19, weight: .semibold, design: .rounded)).foregroundStyle(t.text)
+                    Text(option == .hyperWithoutShift ? "✦" : option.symbol).font(.system(size: 19, weight: .semibold, design: .rounded)).foregroundStyle(t.text)
                     Text(name).font(.system(size: 11, weight: .semibold, design: .rounded)).foregroundStyle(t.secondary)
                 }
                 .frame(maxWidth: .infinity)

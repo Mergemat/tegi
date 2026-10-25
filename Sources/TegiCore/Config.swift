@@ -14,6 +14,8 @@ public struct Mods: OptionSet, Hashable {
     public static let shift = Mods(rawValue: 8)
     public static let meh: Mods = [.ctrl, .alt, .shift]
     public static let hyper: Mods = [.ctrl, .alt, .shift, .cmd]
+    /// What Raycast, Tinycast and Hyperkey send for Hyper unless their Include Shift is on.
+    public static let hyperWithoutShift: Mods = [.ctrl, .alt, .cmd]
 
     /// The keys `mod+self` stands for. A mod that already holds Shift can't add it, so its Shift layer is ⌥⇧.
     public func under(_ mod: Mods) -> Mods { contains(.shift) && mod.contains(.shift) ? union(.alt) : union(mod) }
@@ -566,8 +568,9 @@ public struct Config: Equatable {
     # KEYS
     #
     # Your key moves focus, and with Shift it takes the window along. mod is
-    # alt, ctrl+alt, cmd+alt, hyper (⌃⌥⇧⌘, often Caps Lock) or meh (⌃⌥⇧);
-    # a key that already holds Shift takes the window with ⌥⇧ instead. A bound
+    # alt, ctrl+alt, cmd+alt, or a Hyper key: ctrl+alt+cmd, as Raycast,
+    # Tinycast and Hyperkey send it, or hyper (⌃⌥⇧⌘) with their Include Shift
+    # or Karabiner. A key that already holds Shift uses ⌥⇧ instead. A bound
     # Option+letter no longer types its special character. In your config,
     # bind replaces a binding, unbind <keys> removes one, and unbind all
     # starts from nothing.
@@ -704,15 +707,17 @@ extension KeyCombo {
         self.init(keyCode: code, mods: mods, key: key, description: text)
     }
 
-    public var symbol: String {
-        var s = ""
-        if mods == .hyper { s = "✦" }
-        else if mods.contains(.ctrl) { s += "⌃" }
-        if mods != .hyper {
-            if mods.contains(.alt) { s += "⌥" }
-            if mods.contains(.shift) { s += "⇧" }
-            if mods.contains(.cmd) { s += "⌘" }
-        }
+    public var symbol: String { symbol(hyper: .hyper) }
+
+    /// As people see it: when `hyper` is one of the two Hyper keys, its modifiers show as one ✦, the way Raycast shows them.
+    public func symbol(hyper: Mods) -> String {
+        let star = [Mods.hyper, .hyperWithoutShift].contains(hyper) && mods.isSuperset(of: hyper)
+        let rest = star ? mods.subtracting(hyper) : mods
+        var s = star ? "✦" : ""
+        if rest.contains(.ctrl) { s += "⌃" }
+        if rest.contains(.alt) { s += "⌥" }
+        if rest.contains(.shift) { s += "⇧" }
+        if rest.contains(.cmd) { s += "⌘" }
         let names = ["left": "←", "right": "→", "up": "↑", "down": "↓", "home": "↖", "end": "↘",
                      "pageup": "⇞", "pagedown": "⇟", "tab": "⇥", "return": "↩", "enter": "↩", "space": "Space",
                      "escape": "⎋", "backspace": "⌫", "delete": "⌦", "bracketleft": "[", "bracketright": "]",

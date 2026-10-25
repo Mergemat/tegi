@@ -36,7 +36,7 @@ final class HotkeyOverlay {
 
     func show(_ config: Config) {
         hide()
-        func keys(_ c: Command) -> String? { config.binds.filter { $0.value == c }.map(\.key.symbol).sorted().first }
+        func keys(_ c: Command) -> String? { config.binds.filter { $0.value == c }.map { $0.key.symbol(hyper: config.mod) }.sorted().first }
 
         let grid = NSGridView()
         grid.rowSpacing = 7
