@@ -51,14 +51,12 @@ final class WelcomeWindow {
     private func make() -> NSWindow {
         let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 480, height: 480),
                               styleMask: [.titled, .closable, .fullSizeContentView], backing: .buffered, defer: false)
-        window.titlebarAppearsTransparent = true
-        window.titleVisibility = .hidden
+        chrome(window)
         window.isReleasedWhenClosed = false
-        window.isMovableByWindowBackground = true
         // It can't be minimized or resized, so their greyed-out buttons would only look broken.
         window.standardWindowButton(.miniaturizeButton)?.isHidden = true
         window.standardWindowButton(.zoomButton)?.isHidden = true
-        window.contentViewController = NSHostingController(rootView: WelcomeView(permissions: permissions, done: { [weak self] in
+        window.contentViewController = hosting(WelcomeView(permissions: permissions, done: { [weak self] in
             self?.close()
         }, restart: { [weak self] in self?.onRestart() }))
         window.center()

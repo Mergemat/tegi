@@ -19,12 +19,10 @@ final class SettingsWindow {
     }
 
     private func make() -> NSWindow {
-        let window = NSWindow(contentViewController: NSHostingController(rootView: SettingsView(model: model)))
+        let window = NSWindow(contentViewController: hosting(SettingsView(model: model)))
         window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
-        window.titlebarAppearsTransparent = true
-        window.titleVisibility = .hidden
         window.title = "tegi Settings"
-        window.isMovableByWindowBackground = true
+        chrome(window)
         window.isReleasedWhenClosed = false
         window.setContentSize(CGSize(width: 820, height: 660))
         window.minSize = CGSize(width: 720, height: 560)
@@ -32,6 +30,22 @@ final class SettingsWindow {
         window.setFrameAutosaveName("tegi.settings")
         return window
     }
+}
+
+func hosting<V: View>(_ view: V) -> NSHostingController<V> {
+    let hosting = NSHostingController(rootView: view)
+    // Left to SwiftUI, a toolbar comes and goes with the content, and the window's corners and buttons move with it.
+    hosting.sceneBridgingOptions = []
+    return hosting
+}
+
+/// The same chrome for every tegi window: a hidden toolbar, so the buttons sit inset and the corners match.
+func chrome(_ window: NSWindow) {
+    window.toolbar = NSToolbar(identifier: "tegi")
+    window.toolbarStyle = .unified
+    window.titlebarAppearsTransparent = true
+    window.titleVisibility = .hidden
+    window.isMovableByWindowBackground = true
 }
 
 enum Pane: String, CaseIterable, Identifiable {
