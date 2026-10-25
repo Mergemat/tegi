@@ -89,7 +89,9 @@ final class Scene: NSObject {
         backdrop.contents = backdropImage(wallpaper)
         // Workspaces are inserted by index from the bottom, so the backdrop keeps behind them by depth, not order.
         backdrop.zPosition = -1
-        backdrop.opacity = 0.88
+        // Dimmed over black: darkening the picture itself crushes a dark wallpaper's shadows.
+        backdrop.opacity = 0.75
+        if config.overviewBackdrop == .wallpaper { root.backgroundColor = CGColor(gray: 0, alpha: 1) }
         root.addSublayer(backdrop)
         host.addSublayer(root)
         panel.contentView = view
@@ -134,9 +136,7 @@ final class Scene: NSObject {
             return nil
         }
         let small = image.transformed(by: CGAffineTransform(scaleX: 0.25, y: 0.25))
-        // Blurred until only the wallpaper's colours remain; darkening here crushes them to black, so the backdrop color tints instead.
-        let soft = small.clampedToExtent().applyingGaussianBlur(sigma: 60).cropped(to: small.extent)
-            .applyingFilter("CIColorControls", parameters: [kCIInputSaturationKey: 0.9])
+        let soft = small.clampedToExtent().applyingGaussianBlur(sigma: 6).cropped(to: small.extent)
         return Self.blur.createCGImage(soft, from: small.extent)
     }
 
@@ -149,7 +149,7 @@ final class Scene: NSObject {
             label.fontSize = 13
             label.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
             label.foregroundColor = CGColor(gray: 1, alpha: 1)
-            label.backgroundColor = CGColor(gray: 0, alpha: 0.35)
+            label.backgroundColor = CGColor(gray: 1, alpha: 0.12)
             label.cornerRadius = 11
             label.alignmentMode = .center
             label.contentsScale = panel.backingScaleFactor
@@ -211,7 +211,11 @@ final class Scene: NSObject {
             for win in windows {
                 seen.insert(win.id)
                 depths[win.id] = win.depth
-                guard drag?.id != win.id || drag?.moving != true else { continue }
+                // The dragged window stays where the pointer has it, but keeps the ring if it's the focused one.
+                guard drag?.id != win.id || drag?.moving != true else {
+                    if let color = win.ring, let card = cards[win.id] { wear(color, card, radius: win.radius) }
+                    continue
+                }
                 let card = cards[win.id] ?? makeCard(win)
                 cards[win.id] = card
                 if card.superlayer !== workspaces[w].container {
@@ -223,12 +227,7 @@ final class Scene: NSObject {
                 card.zPosition = win.depth
                 if let image = win.image, card.contents == nil { setContents(image, of: card) }
                 card.cornerRadius = win.radius
-                if let color = win.ring {
-                    ring.borderColor = cgColor(color)
-                    ring.cornerRadius = win.radius + config.focusRingWidth
-                    ring.frame = card.bounds.insetBy(dx: -config.focusRingWidth, dy: -config.focusRingWidth)
-                    card.addSublayer(ring)
-                }
+                if let color = win.ring { wear(color, card, radius: win.radius) }
             }
         }
         for (id, card) in cards where !seen.contains(id) {
@@ -237,6 +236,13 @@ final class Scene: NSObject {
             depths[id] = nil
         }
         CATransaction.commit()
+    }
+
+    private func wear(_ color: Color, _ card: CALayer, radius: Double) {
+        ring.borderColor = cgColor(color)
+        ring.cornerRadius = radius + config.focusRingWidth
+        ring.frame = card.bounds.insetBy(dx: -config.focusRingWidth, dy: -config.focusRingWidth)
+        card.addSublayer(ring)
     }
 
     func setContents(_ contents: IOSurface, for id: WindowID) {
@@ -425,7 +431,8 @@ final class Scene: NSObject {
             }
             if labels.indices.contains(i) {
                 let label = labels[i]
-                label.position = CGPoint(x: x + 12 + label.bounds.width / 2, y: size.height - y - 12 - label.bounds.height / 2)
+                // Above the workspace, in the gap, so it never covers a window.
+                label.position = CGPoint(x: x + label.bounds.width / 2, y: size.height - y + 6 + label.bounds.height / 2)
                 label.opacity = config.overviewLabels ? Float(progress) : 0
             }
         }

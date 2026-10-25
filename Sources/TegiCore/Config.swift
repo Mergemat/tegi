@@ -579,7 +579,7 @@ public struct Config: Equatable {
 
     # The overview shows every workspace at this scale, this far apart, with
     # rounded corners, names and app icons. Behind them goes your wallpaper,
-    # blurred, or backdrop-color. Pushing the pointer into this corner of a
+    # softly blurred and dimmed, or backdrop-color. Pushing the pointer into this corner of a
     # display opens it: top-left, top-right, bottom-left, bottom-right or off.
     overview-zoom 0.5
     overview-gap 0.1

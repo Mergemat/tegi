@@ -25,7 +25,7 @@ struct OverlaysPane: View {
                       range: 0...0.3, step: 0.02, format: Self.percent, live: { $0.overviewGap = $1 })
             SliderRow(title: "Rounded corners", key: ["overview-workspace-radius"], value: c.overviewWorkspaceRadius,
                       range: 0...30, format: { "\(Int($0.rounded())) pt" }, live: { $0.overviewWorkspaceRadius = $1 })
-            ToggleRow(title: "Workspace names", detail: "Their names, or numbers, in each corner.", key: ["overview-labels"],
+            ToggleRow(title: "Workspace names", detail: "Their names, or numbers, above each one.", key: ["overview-labels"],
                       isOn: c.overviewLabels, on: ["on"], off: ["off"])
             ToggleRow(title: "App icons", detail: "On each window, to tell them apart when small.", key: ["overview-icons"],
                       isOn: c.overviewIcons, on: ["on"], off: ["off"])
