@@ -8,6 +8,7 @@ final class FocusRing {
         var screen: CGRect
         var frame: CGRect?
         var active: Bool
+        var radius: Double = 0
     }
 
     struct Tabs {
@@ -93,14 +94,14 @@ final class FocusRing {
         let w = config.focusRingWidth
         let rect = local(frame, in: target.screen).insetBy(dx: -w, dy: -w)
         let color = target.active ? config.focusRingColor : config.focusRingInactiveColor
-        let drawn = Drawn(frame: rect, color: color, width: w, radius: config.windowCornerRadius)
+        let drawn = Drawn(frame: rect, color: color, width: w, radius: target.radius)
         if !overlay.ring.isHidden, overlay.last == drawn { return }
         overlay.last = drawn
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         overlay.ring.frame = rect
         overlay.ring.borderWidth = w
-        overlay.ring.cornerRadius = config.windowCornerRadius + w
+        overlay.ring.cornerRadius = target.radius + w
         overlay.ring.borderColor = cgColor(color)
         overlay.ring.isHidden = false
         CATransaction.commit()

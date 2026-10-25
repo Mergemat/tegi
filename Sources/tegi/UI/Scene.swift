@@ -7,6 +7,7 @@ final class Scene: NSObject {
         var id: WindowID
         var frame: CGRect
         var ring: Color?
+        var radius: Double
         var floating: Bool
         var depth: CGFloat = 0
         var image: IOSurface?
@@ -90,7 +91,6 @@ final class Scene: NSObject {
             if code == 53 || code == 36 { self?.onClose() }
         }
         ring.borderWidth = config.focusRingWidth
-        ring.cornerRadius = config.windowCornerRadius + config.focusRingWidth
         hint.backgroundColor = cgColor(Color(hex: "#7fc8ff80")!)
         hint.cornerRadius = 6
         // Shown by unhiding layers: ordering in or fading a window takes effect frames after the motion starts.
@@ -164,8 +164,10 @@ final class Scene: NSObject {
                 }
                 card.zPosition = win.depth
                 if let image = win.image, card.contents == nil { setContents(image, of: card) }
+                card.cornerRadius = win.radius
                 if let color = win.ring {
                     ring.borderColor = cgColor(color)
+                    ring.cornerRadius = win.radius + config.focusRingWidth
                     ring.frame = card.bounds.insetBy(dx: -config.focusRingWidth, dy: -config.focusRingWidth)
                     card.addSublayer(ring)
                 }
@@ -196,7 +198,7 @@ final class Scene: NSObject {
     private func makeCard(_ win: Window) -> CALayer {
         let card = CALayer()
         card.contentsGravity = .resize
-        card.cornerRadius = config.windowCornerRadius
+        card.cornerRadius = win.radius
         card.masksToBounds = false
         card.name = String(win.id)
         if let image = win.image {

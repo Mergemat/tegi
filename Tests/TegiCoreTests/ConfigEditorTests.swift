@@ -109,3 +109,9 @@ private func parsed(_ text: String) -> Config { try! Config.parse(text) }
     #expect(Command(["show-settings", "hotkeys"]) == .showSettings("hotkeys"))
     #expect(Command(Command.showSettings("motion").words) == .showSettings("motion"))
 }
+
+@Test func cornersFollowEachWindowUnlessANumberIsGiven() throws {
+    #expect(Config.builtIn.windowCornerRadius == nil)
+    #expect(try Config.parse("window-corner-radius auto").windowCornerRadius == nil)
+    #expect(try Config.parse("window-corner-radius 10").windowCornerRadius == 10)
+}

@@ -171,14 +171,14 @@ extension WindowManager {
             let ws = mon.workspaces[w]
             let ringed = w == mon.active && !ws.columns.isEmpty && !ws.columns[ws.active].fullscreen
             var windows = world.stripFrames(monitor: m, workspace: w, config: config).map { f in
-                Scene.Window(id: f.id, frame: f.frame, ring: f.active && ringed ? ring : nil, floating: false,
+                Scene.Window(id: f.id, frame: f.frame, ring: f.active && ringed ? ring : nil, radius: cornerRadius(f.id), floating: false,
                              depth: depth(f.id), image: snapshots.images[f.id], icon: wins[f.id]?.worker.icon)
             }
             let id = mon.workspaces[w].id
             for win in wins.values where win.floating && !win.suspended && win.floatHome == id {
                 guard let f = win.floatFrame else { continue }
                 windows.append(Scene.Window(id: win.id, frame: f.offsetBy(dx: -mon.area.minX, dy: -mon.area.minY),
-                                            ring: nil, floating: true, depth: depth(win.id), image: snapshots.images[win.id], icon: win.worker.icon))
+                                            ring: nil, radius: cornerRadius(win.id), floating: true, depth: depth(win.id), image: snapshots.images[win.id], icon: win.worker.icon))
             }
             return windows
         }

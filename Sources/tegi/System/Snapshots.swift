@@ -4,6 +4,8 @@ import TegiCore
 
 final class Snapshots {
     private(set) var images: [WindowID: IOSurface] = [:]
+    /// Each window's corner radius in points, measured from its picture.
+    private(set) var radii: [WindowID: Double] = [:]
     private var inFlight: Set<WindowID> = []
 
     // The check takes over 10 ms, too slow for a keypress.
@@ -19,7 +21,10 @@ final class Snapshots {
         }
     }
 
-    func forget(_ id: WindowID) { images[id] = nil }
+    func forget(_ id: WindowID) {
+        images[id] = nil
+        radii[id] = nil
+    }
 
     // A CGImage is uploaded to the GPU on first display, stalling that frame; a surface isn't.
     private static func surface(_ filter: SCContentFilter, _ config: SCStreamConfiguration,
@@ -45,6 +50,13 @@ final class Snapshots {
         context.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
         if let list = space.copyPropertyList() { IOSurfaceSetValue(surface, kIOSurfaceColorSpace, list) }
         return surface
+    }
+
+    private static func cornerRadius(_ surface: IOSurface) -> Double? {
+        surface.lock(options: .readOnly, seed: nil)
+        defer { surface.unlock(options: .readOnly, seed: nil) }
+        let base = surface.baseAddress.assumingMemoryBound(to: UInt8.self), row = surface.bytesPerRow
+        return Corners.radius(width: surface.width, height: surface.height) { x, y in base[y * row + x * 4 + 3] }
     }
 
     private static func displaySpace() -> (space: CGColorSpace, name: CFString) {
@@ -89,10 +101,10 @@ final class Snapshots {
         Task {
             let content = try? await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: false)
             let byID = Dictionary((content?.windows ?? []).map { ($0.windowID, $0) }, uniquingKeysWith: { a, _ in a })
-            await withTaskGroup(of: (WindowID, IOSurface?).self) { group in
+            await withTaskGroup(of: (WindowID, IOSurface?, Double?).self) { group in
                 for w in wanted {
                     guard let window = byID[w.windowID] else {
-                        group.addTask { (w.id, nil) }
+                        group.addTask { (w.id, nil, nil) }
                         continue
                     }
                     group.addTask {
@@ -101,12 +113,14 @@ final class Snapshots {
                         config.height = Int(window.frame.height * scale)
                         config.showsCursor = false
                         config.ignoreShadowsSingleWindow = true
-                        return (w.id, await Self.surface(SCContentFilter(desktopIndependentWindow: window), config, space))
+                        let surface = await Self.surface(SCContentFilter(desktopIndependentWindow: window), config, space)
+                        return (w.id, surface, surface.flatMap(Self.cornerRadius).map { $0 / scale })
                     }
                 }
-                for await (id, image) in group {
+                for await (id, image, radius) in group {
                     await MainActor.run {
                         self.inFlight.remove(id)
+                        if let radius { self.radii[id] = radius }
                         if let image {
                             self.images[id] = image
                             updated(id)

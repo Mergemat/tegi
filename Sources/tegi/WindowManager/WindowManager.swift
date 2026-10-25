@@ -344,6 +344,9 @@ final class WindowManager {
         return p?.visible == true ? p?.frame : nil
     }
 
+    /// What the ring and pictures round a window's corners by: a set radius, else the window's own, else macOS's usual.
+    func cornerRadius(_ id: WindowID) -> Double { config.windowCornerRadius ?? snapshots.radii[id] ?? 16 }
+
     func updateRing(at now: CFTimeInterval) {
         let floatingFocused = focused.flatMap { wins[$0] }?.floating == true
         var tabs: [FocusRing.Tabs] = []
@@ -358,7 +361,8 @@ final class WindowManager {
             if let id = ws.activeWindow, !ws.columns[ws.active].fullscreen, !(m == world.focusedMonitor && floatingFocused) {
                 frame = shown(id)
             }
-            return FocusRing.Target(display: mon.id, screen: mon.screen, frame: frame, active: m == world.focusedMonitor)
+            return FocusRing.Target(display: mon.id, screen: mon.screen, frame: frame, active: m == world.focusedMonitor,
+                                    radius: ws.activeWindow.map(cornerRadius) ?? 0)
         }
         ring.update(rings, tabs: tabs, config: config)
     }

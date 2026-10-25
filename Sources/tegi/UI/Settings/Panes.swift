@@ -152,7 +152,7 @@ struct StripScene: View {
             let gap = max(4, config.gap * 0.45)
             let height = geo.size.height - 22 - gap
             let column = config.defaultColumnWidth * (geo.size.width - 2 * gap) * 0.62
-            let radius = config.windowCornerRadius * 0.6
+            let radius = (config.windowCornerRadius ?? 16) * 0.6
             HStack(alignment: .bottom, spacing: gap) {
                 Friend(radius: radius).frame(width: column, height: height)
                 Mascot(ring: SwiftUI.Color(config.focusRingColor), ringWidth: config.focusRingWidth > 0 ? max(1.5, config.focusRingWidth * 0.75) : 0,
@@ -264,7 +264,7 @@ struct LooksPane: View {
     var body: some View {
         let c = model.shown
         let ring = c.focusRingWidth > 0 ? max(1.5, c.focusRingWidth * 0.9) : 0
-        let radius = c.windowCornerRadius * 0.9
+        let radius = (c.windowCornerRadius ?? 16) * 0.9
         Hero(height: 132) {
             HStack(spacing: 46) {
                 VStack(spacing: 6) {
@@ -291,8 +291,12 @@ struct LooksPane: View {
 
         CardTitle("Windows")
         Card {
-            SliderRow(title: "Corner radius", detail: "Match your apps so the ring hugs them.", key: ["window-corner-radius"],
-                      value: c.windowCornerRadius, range: 0...30, last: true, format: points, live: { $0.windowCornerRadius = $1 })
+            ToggleRow(title: "Fit each window's corners", detail: "The ring follows every window's own rounding.",
+                      key: ["window-corner-radius"], isOn: c.windowCornerRadius == nil, last: c.windowCornerRadius == nil, on: nil, off: ["16"])
+            if let radius = c.windowCornerRadius {
+                SliderRow(title: "Corner radius", detail: "Used for every window.", key: ["window-corner-radius"],
+                          value: radius, range: 0...30, last: true, format: points, live: { $0.windowCornerRadius = $1 })
+            }
         }
 
         CardTitle("Overview")

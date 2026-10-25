@@ -139,7 +139,8 @@ public struct Config: Equatable {
     public var focusRingWidth: Double = 4
     public var focusRingColor = Color(hex: "#7fc8ff")!
     public var focusRingInactiveColor = Color(hex: "#505050")!
-    public var windowCornerRadius: Double = 12
+    /// nil follows each window's own corners.
+    public var windowCornerRadius: Double?
     public var rules: [WindowRule] = []
     public var workspaces: [NamedWorkspace] = []
     public var defaultColumnDisplayTabbed = false
@@ -212,7 +213,11 @@ public struct Config: Equatable {
             case "focus-ring-inactive-color":
                 config.focusRingInactiveColor = try color()
             case "window-corner-radius":
-                config.windowCornerRadius = try number(0...40, "window-corner-radius must be between 0 and 40 points")
+                if args == ["auto"] {
+                    config.windowCornerRadius = nil
+                } else {
+                    config.windowCornerRadius = try number(0...40, "window-corner-radius is auto or between 0 and 40 points")
+                }
             case "default-column-width":
                 config.defaultColumnWidth = try fraction(try one())
             case "preset-column-widths":
@@ -434,7 +439,10 @@ public struct Config: Equatable {
     focus-ring-width 4
     focus-ring-color #7fc8ff
     focus-ring-inactive-color #505050
-    window-corner-radius 12
+
+    # auto fits the ring to each window's own corners; a number uses that
+    # radius, in points, for every window.
+    window-corner-radius auto
 
     # The overview shows every workspace at this scale, on this backdrop.
     # Pushing the pointer into the top-left corner of a display opens it.
