@@ -29,6 +29,26 @@ struct AppsPane: View {
         let rules = model.config.rules
         let startup = model.config.startup
         Form {
+            Section {} header: {
+                Previews(height: 130) {
+                    PreviewCard(caption: "Apps open just how you like") {
+                        ZStack {
+                            HStack(spacing: 8) {
+                                Friend(radius: 6).frame(width: 40, height: 60)
+                                Mascot(ringWidth: 2.5, radius: 7).frame(width: 48, height: 60)
+                                Friend(radius: 6).frame(width: 40, height: 60)
+                            }
+                            Image(systemName: "plus.forwardslash.minus")
+                                .font(.system(size: 13, weight: .bold))
+                                .foregroundStyle(SwiftUI.Color(red: 0.2, green: 0.22, blue: 0.4))
+                                .frame(width: 38, height: 30)
+                                .background(.white, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                                .shadow(color: .black.opacity(0.35), radius: 6, y: 3)
+                                .offset(x: 56, y: -22)
+                        }
+                    }
+                }
+            }
             ForEach(Array(rules.enumerated()), id: \.offset) { i, rule in
                 RuleSection(rule: rule) { changed in
                     var list = rules
@@ -45,9 +65,9 @@ struct AppsPane: View {
                     model.setList("rule", (rules + [rule]).map(\.words))
                 }
             } header: {
-                if rules.isEmpty { Text("Window rules") }
+                if rules.isEmpty { Heading("Window rules") }
             } footer: {
-                Text("Make an app float, open on a workspace, or start at a set width. Every matching rule applies, in order.")
+                Note("Make an app float, open on a workspace, or start at a set width. Every matching rule applies, in order.")
             }
             Section {
                 ForEach(Array(startup.enumerated()), id: \.offset) { i, command in
@@ -70,8 +90,9 @@ struct AppsPane: View {
                     Button("Add", action: addShell).disabled(shell.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
             } header: {
-                Text("Start with tegi")
+                Heading("Start with tegi")
             }
+            Section {} footer: { PaneFooter() }
         }
         .formStyle(.grouped)
     }

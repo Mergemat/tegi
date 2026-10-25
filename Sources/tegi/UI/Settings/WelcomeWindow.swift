@@ -42,8 +42,10 @@ final class WelcomeWindow {
         permissions.watch()
         let window = self.window ?? make()
         self.window = window
-        NSApp.activate()
-        window.makeKeyAndOrderFront(nil)
+        // Opened by a hotkey or the command line, tegi isn't the active app, and a plain activate leaves it behind.
+        NSApp.activate(ignoringOtherApps: true)
+        window.orderFrontRegardless()
+        window.makeKey()
     }
 
     private func make() -> NSWindow {
@@ -105,7 +107,7 @@ struct WelcomeView: View {
                 }
                 if Bundle.main.bundlePath.hasPrefix("/Applications/") {
                     HStack(spacing: 12) {
-                        Badge(symbol: "sunrise.fill", tint: SwiftUI.Color(red: 1, green: 0.66, blue: 0.3), size: 34)
+                        Tile(symbol: "sunrise.fill", tint: SwiftUI.Color(red: 1, green: 0.66, blue: 0.3), size: 34)
                         VStack(alignment: .leading, spacing: 2) {
                             Text("Start at login").font(.system(size: 14, weight: .semibold))
                             Text("So your windows are tiled from the moment you log in.").font(.system(size: 12)).foregroundStyle(.secondary)
@@ -155,7 +157,7 @@ struct PermissionRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            Badge(symbol: symbol, tint: tint, size: 34)
+            Tile(symbol: symbol, tint: tint, size: 34)
             VStack(alignment: .leading, spacing: 2) {
                 Text(title).font(.system(size: 14, weight: .semibold))
                 Text(detail).font(.system(size: 12)).foregroundStyle(.secondary)

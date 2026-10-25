@@ -35,10 +35,12 @@ struct LayoutPane: View {
         let c = model.config
         let fixed = c.presetColumnWidths.filter { if case .fixed = $0 { true } else { false } }
         Form {
-            Section {
-                Stage(height: 160) { StripPreview(config: c) }
+            Section {} header: {
+                Previews {
+                    PreviewCard(caption: "Your strip") { StripPreview(config: c).padding(14) }
+                }
             }
-            Section("Columns") {
+            Section {
                 SliderRow(title: "Gap", key: ["gap"], value: c.gap, range: 0...64, format: { "\(Int($0)) pt" })
                 SliderRow(title: "New column width", key: ["default-column-width"], value: c.defaultColumnWidth,
                           range: 0.2...1, step: 0.05, format: percent)
@@ -47,14 +49,14 @@ struct LayoutPane: View {
                     Text("Stacked").tag(false)
                     Text("As Tabs").tag(true)
                 }
-            }
+            } header: { Heading("Columns") }
             Section {
                 Presets(choices: [0.25, 1.0 / 3, 0.4, 0.5, 0.6, 2.0 / 3, 0.75, 1].map { .proportion($0) } + fixed,
                         chosen: c.presetColumnWidths) { model.set(["preset-column-widths"], $0.isEmpty ? nil : $0.map(\.text)) }
             } header: {
-                Text("Widths to cycle through")
+                Heading("Widths to cycle through")
             } footer: {
-                if let keys = c.keys(for: .switchPresetColumnWidth) { Text("\(keys) steps through these.") }
+                if let keys = c.keys(for: .switchPresetColumnWidth) { Note("\(keys) steps through these.") }
             }
             Section {
                 Presets(choices: [0.25, 1.0 / 3, 0.5, 2.0 / 3, 0.75, 1].map { .proportion($0) },
@@ -62,11 +64,11 @@ struct LayoutPane: View {
                     model.set(["preset-window-heights"], $0.isEmpty ? nil : $0.map(\.text))
                 }
             } header: {
-                Text("Heights to cycle through")
+                Heading("Heights to cycle through")
             } footer: {
-                Text("For windows stacked in one column.")
+                Note("For windows stacked in one column.")
             }
-            Section("Scrolling") {
+            Section {
                 Picker("Center the focused column", selection: Binding(get: { c.centerFocusedColumn },
                                                                        set: { model.set(["center-focused-column"], [$0.rawValue]) })) {
                     Text("Never").tag(CenterMode.never)
@@ -74,7 +76,7 @@ struct LayoutPane: View {
                     Text("Always").tag(CenterMode.always)
                 }
                 SettingToggle(title: "Center a column that's alone", key: ["always-center-single-column"], isOn: c.alwaysCenterSingleColumn)
-            }
+            } header: { Heading("Scrolling") }
             Section {
                 let s = [c.struts.left, c.struts.right, c.struts.top, c.struts.bottom]
                 ForEach(Array(["Left", "Right", "Top", "Bottom"].enumerated()), id: \.offset) { i, side in
@@ -87,10 +89,11 @@ struct LayoutPane: View {
                     }
                 }
             } header: {
-                Text("Screen edges")
+                Heading("Screen edges")
             } footer: {
-                Text("Space kept clear on every display, for a dock or a bar.")
+                Note("Space kept clear on every display, for a dock or a bar.")
             }
+            Section {} footer: { PaneFooter() }
         }
         .formStyle(.grouped)
     }
@@ -104,12 +107,12 @@ struct Presets: View {
 
     var body: some View {
         let picked = Set(chosen.map(\.text))
-        HStack(spacing: 6) {
+        HStack(spacing: 14) {
             ForEach(choices, id: \.text) { choice in
                 Toggle(choice.label, isOn: Binding(get: { picked.contains(choice.text) }, set: { on in
                     change(choices.filter { $0.text == choice.text ? on : picked.contains($0.text) })
                 }))
-                .toggleStyle(.button)
+                .toggleStyle(.checkbox)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -169,12 +172,31 @@ struct WorkspacesPane: View {
     var body: some View {
         let c = model.config
         Form {
-            Section("Switching") {
+            Section {} header: {
+                Previews {
+                    PreviewCard(caption: "Workspaces stack up and slide") {
+                        VStack(spacing: 6) {
+                            ForEach(0..<3, id: \.self) { row in
+                                HStack(spacing: 5) {
+                                    Friend(radius: 4, face: false).frame(width: 44)
+                                    if row == 1 { Mascot(ringWidth: 2, radius: 4).frame(width: 44) } else { Friend(radius: 4, face: false).frame(width: 44) }
+                                    Friend(radius: 4, face: false).frame(width: 44)
+                                }
+                                .padding(4)
+                                .background(.white.opacity(row == 1 ? 0.14 : 0.06), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                                .opacity(row == 1 ? 1 : 0.6)
+                            }
+                        }
+                        .padding(.vertical, 10)
+                    }
+                }
+            }
+            Section {
                 SettingToggle(title: "Press a workspace's key again to go back", detail: "Returns to the workspace you were on before.",
                               key: ["workspace-auto-back-and-forth"], isOn: c.workspaceAutoBackAndForth)
                 SettingToggle(title: "Keep an empty workspace on top", detail: "Besides the one always waiting at the bottom.",
                               key: ["empty-workspace-above-first"], isOn: c.emptyWorkspaceAboveFirst)
-            }
+            } header: { Heading("Switching") }
             Section {
                 ForEach(Array(c.workspaces.enumerated()), id: \.offset) { i, ws in
                     LabeledContent(ws.name) {
@@ -199,10 +221,11 @@ struct WorkspacesPane: View {
                     Button("Add", action: add).disabled(newName.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
             } header: {
-                Text("Named workspaces")
+                Heading("Named workspaces")
             } footer: {
-                Text("They stay even when empty and can be reached by name. Pin one to a display by the display's name.")
+                Note("They stay even when empty and can be reached by name. Pin one to a display by the display's name.")
             }
+            Section {} footer: { PaneFooter() }
         }
         .formStyle(.grouped)
     }
@@ -241,40 +264,42 @@ struct LooksPane: View {
         let c = model.config
         let ring = c.focusRingWidth > 0 ? max(1.5, c.focusRingWidth * 0.9) : 0
         Form {
-            Section {
-                Stage(height: 170) {
-                    HStack(spacing: 34) {
+            Section {} header: {
+                Previews(height: 160) {
+                    PreviewCard(caption: "Focused window") {
                         Mascot(ring: SwiftUI.Color(c.focusRingColor), ringWidth: ring, radius: c.windowCornerRadius * 0.8)
-                            .frame(width: 92, height: 112)
-                        Mascot(ring: SwiftUI.Color(c.focusRingInactiveColor), ringWidth: ring, radius: c.windowCornerRadius * 0.8)
-                            .frame(width: 92, height: 112)
-                            .opacity(0.85)
+                            .frame(width: 78, height: 96)
                     }
-                    .animation(.spring(duration: 0.35, bounce: 0.3), value: c.focusRingWidth)
-                    .animation(.spring(duration: 0.35, bounce: 0.3), value: c.windowCornerRadius)
+                    PreviewCard(caption: "On your other displays") {
+                        Mascot(ring: SwiftUI.Color(c.focusRingInactiveColor), ringWidth: ring, radius: c.windowCornerRadius * 0.8, asleep: true)
+                            .frame(width: 78, height: 96)
+                    }
                 }
+                .animation(.spring(duration: 0.35, bounce: 0.3), value: c.focusRingWidth)
+                .animation(.spring(duration: 0.35, bounce: 0.3), value: c.windowCornerRadius)
             }
             Section {
                 SliderRow(title: "Width", key: ["focus-ring-width"], value: c.focusRingWidth, range: 0...12, format: { $0 == 0 ? "Off" : "\(Int($0)) pt" })
                 SettingColor(title: "Color", key: ["focus-ring-color"], color: c.focusRingColor)
                 SettingColor(title: "Color on other displays", key: ["focus-ring-inactive-color"], color: c.focusRingInactiveColor)
             } header: {
-                Text("Focus ring")
+                Heading("Focus ring")
             } footer: {
-                Text("The ring around the focused window. On displays you're not using, the second color marks their focused window.")
+                Note("The ring around the focused window. On displays you're not using, the second color marks their focused window.")
             }
             Section {
                 SliderRow(title: "Corner radius", key: ["window-corner-radius"], value: c.windowCornerRadius, range: 0...30, format: { "\(Int($0)) pt" })
             } header: {
-                Text("Windows")
+                Heading("Windows")
             } footer: {
-                Text("Match your apps' corners so the ring hugs them.")
+                Note("Match your apps' corners so the ring hugs them.")
             }
-            Section("Overview") {
+            Section {
                 SliderRow(title: "Zoom", key: ["overview-zoom"], value: c.overviewZoom, range: 0.25...0.75, step: 0.05,
                           low: "Small", high: "Big", format: percent)
                 SettingColor(title: "Backdrop", key: ["backdrop-color"], color: c.backdropColor)
-            }
+            } header: { Heading("Overview") }
+            Section {} footer: { PaneFooter() }
         }
         .formStyle(.grouped)
     }
@@ -290,17 +315,21 @@ struct MotionPane: View {
         let a = model.config.animations
         let spring = a.springs[.windowMovement] ?? Animations().springs[.windowMovement]!
         Form {
-            Section {
-                Stage(height: 150) {
-                    Mascot(radius: 10).frame(width: 64, height: 78)
+            Section {} header: {
+                Previews {
+                    PreviewCard(caption: "Click to play") {
+                        HStack(spacing: 10) {
+                            Friend(radius: 8).frame(width: 46, height: 72)
+                            Mascot(radius: 9).frame(width: 58, height: 72)
+                            Friend(radius: 8).frame(width: 46, height: 72)
+                        }
                         .frame(maxWidth: .infinity, alignment: hop ? .trailing : .leading)
-                        .padding(.horizontal, 60)
+                        .padding(.horizontal, 40)
                         .animation(a.on ? springAnimation(spring, slowdown: a.slowdown) : nil, value: hop)
-                    Text("Click to play").font(.caption).foregroundStyle(.white.opacity(0.6))
-                        .frame(maxHeight: .infinity, alignment: .bottom).padding(.bottom, 8)
+                    }
+                    .contentShape(Rectangle())
+                    .onTapGesture { hop.toggle() }
                 }
-                .contentShape(Rectangle())
-                .onTapGesture { hop.toggle() }
             }
             Section {
                 SettingToggle(title: "Animations", detail: "When off, or with macOS's Reduce Motion, windows jump into place.",
@@ -309,12 +338,13 @@ struct MotionPane: View {
                           low: "Slower", high: "Faster", write: { [number(pow(2, -$0))] })
                     .disabled(!a.on)
             }
-            Section("Each animation") {
+            Section {
                 ForEach(Animations.Name.allCases, id: \.self) { name in
                     AnimationRow(name: name) { hop.toggle() }
                 }
-            }
+            } header: { Heading("Each animation") }
             .disabled(!a.on)
+            Section {} footer: { PaneFooter() }
         }
         .formStyle(.grouped)
     }
@@ -401,7 +431,26 @@ struct GesturesPane: View {
     var body: some View {
         let c = model.config
         Form {
-            Section("Trackpad") {
+            Section {} header: {
+                Previews {
+                    PreviewCard(caption: "Three fingers slide the strip") {
+                        ZStack {
+                            RoundedRectangle(cornerRadius: 10, style: .continuous).fill(.white.opacity(0.12)).frame(width: 150, height: 96)
+                            HStack(spacing: 12) {
+                                ForEach(0..<3, id: \.self) { _ in Circle().fill(.white.opacity(0.85)).frame(width: 16, height: 16) }
+                            }
+                            Image(systemName: "arrow.left.and.right").font(.system(size: 14, weight: .bold)).foregroundStyle(tegiBlue).offset(y: 30)
+                        }
+                    }
+                    PreviewCard(caption: "The top-left corner opens the overview") {
+                        ZStack(alignment: .topLeading) {
+                            RoundedRectangle(cornerRadius: 8, style: .continuous).fill(.white.opacity(0.1)).frame(width: 150, height: 96)
+                            Image(systemName: "cursorarrow").font(.system(size: 18)).foregroundStyle(.white).offset(x: 4, y: 3)
+                        }
+                    }
+                }
+            }
+            Section {
                 SettingToggle(title: "Three-finger swipes", detail: "Sideways scrolls the strip, up and down switch workspaces, four fingers up opens the overview.",
                               key: ["three-finger-swipe"], isOn: c.threeFingerSwipe, on: ["on"], off: ["off"])
                 if threeFingerConflict && c.threeFingerSwipe {
@@ -414,17 +463,17 @@ struct GesturesPane: View {
                             .foregroundStyle(.orange)
                     }
                 }
-            }
+            } header: { Heading("Trackpad") }
             Section {
                 Picker("Hold to swipe and drag", selection: Binding(get: { modifierName(c.swipeModifier) }, set: { model.set(["swipe-modifier"], [$0]) })) {
                     ForEach(Self.modifiers, id: \.1) { Text($0.0).tag($0.1) }
                 }
             } header: {
-                Text("Modifier")
+                Heading("Modifier")
             } footer: {
-                Text("While held, two fingers or the mouse wheel scroll the strip, dragging moves a window, and right-dragging resizes it.")
+                Note("While held, two fingers or the mouse wheel scroll the strip, dragging moves a window, and right-dragging resizes it.")
             }
-            Section("Pointer") {
+            Section {
                 SettingToggle(title: "Hot corner", detail: "Push the pointer into the top-left corner to open the overview.",
                               key: ["hot-corner"], isOn: c.hotCorner, on: ["on"], off: ["off"])
                 SettingToggle(title: "Focus follows the pointer", key: ["focus-follows-mouse"], isOn: c.focusFollowsMouse != nil)
@@ -435,7 +484,8 @@ struct GesturesPane: View {
                 }
                 SettingToggle(title: "Pointer follows focus", detail: "Moves the pointer into windows you focus with the keyboard.",
                               key: ["warp-mouse-to-focus"], isOn: c.warpMouseToFocus)
-            }
+            } header: { Heading("Pointer") }
+            Section {} footer: { PaneFooter() }
         }
         .formStyle(.grouped)
     }
@@ -476,6 +526,9 @@ struct AboutPane: View {
                 .padding(.vertical, 18)
             }
             Section {
+                LabeledContent("Permissions") {
+                    Button("Check…") { model.onPermissions() }
+                }
                 LabeledContent("Config file") {
                     Button("Open") { NSWorkspace.shared.open(model.url) }
                 }
@@ -486,7 +539,7 @@ struct AboutPane: View {
                     Link("GitHub", destination: URL(string: "https://github.com/Mergemat/tegi")!)
                 }
             } footer: {
-                Text("Everything here is saved to ~/.config/tegi/config, so you can edit it by hand too.")
+                Note("Everything here is saved to ~/.config/tegi/config, so you can edit it by hand too.")
             }
         }
         .formStyle(.grouped)

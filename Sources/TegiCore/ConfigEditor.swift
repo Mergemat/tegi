@@ -107,6 +107,7 @@ extension Command {
         case .moveColumnToWorkspace(let ref): return ["move-column-to-workspace", ref.text]
         case .moveWindowToWorkspace(let ref): return ["move-window-to-workspace", ref.text]
         case .setWorkspaceName(let name): return ["set-workspace-name", name]
+        case .showSettings(let pane): return ["show-settings"] + (pane.map { [$0] } ?? [])
         case .focusMonitor(let d): return ["focus-monitor-" + d.rawValue]
         case .moveColumnToMonitor(let d): return ["move-column-to-monitor-" + d.rawValue]
         case .moveWindowToMonitor(let d): return ["move-window-to-monitor-" + d.rawValue]

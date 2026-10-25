@@ -8,6 +8,7 @@ final class SettingsModel: ObservableObject {
     @Published private var text = ""
     let url: URL
     var onRecording: (Bool) -> Void = { _ in }
+    var onPermissions: () -> Void = {}
 
     init(url: URL) {
         self.url = url

@@ -41,7 +41,7 @@ public enum Command: Equatable {
     case toggleWindowFloating, moveWindowToFloating, moveWindowToTiling
     case focusFloating, focusTiling, switchFocusBetweenFloatingAndTiling
     case focusWindowPrevious, nextWindow(sameApp: Bool), previousWindow(sameApp: Bool)
-    case closeWindow, showHotkeyOverlay, showSettings
+    case closeWindow, showHotkeyOverlay, showSettings(String?)
     case toggleOverview, openOverview, closeOverview
     case spawn([String]), spawnSh(String), quit
 
@@ -96,7 +96,7 @@ public enum Command: Equatable {
         "focus-floating": .focusFloating, "focus-tiling": .focusTiling,
         "switch-focus-between-floating-and-tiling": .switchFocusBetweenFloatingAndTiling,
         "focus-window-previous": .focusWindowPrevious,
-        "close-window": .closeWindow, "show-hotkey-overlay": .showHotkeyOverlay, "show-settings": .showSettings,
+        "close-window": .closeWindow, "show-hotkey-overlay": .showHotkeyOverlay, "show-settings": .showSettings(nil),
         "toggle-overview": .toggleOverview, "open-overview": .openOverview, "close-overview": .closeOverview,
         "quit": .quit,
     ]
@@ -138,6 +138,7 @@ public enum Command: Equatable {
         case "move-column-to-workspace": self = .moveColumnToWorkspace(WorkspaceRef(arg))
         case "move-window-to-workspace": self = .moveWindowToWorkspace(WorkspaceRef(arg))
         case "set-workspace-name": self = .setWorkspaceName(arg)
+        case "show-settings": self = .showSettings(arg)
         case "set-column-display":
             guard arg == "tabbed" || arg == "normal" else { return nil }
             self = .setColumnDisplay(tabbed: arg == "tabbed")

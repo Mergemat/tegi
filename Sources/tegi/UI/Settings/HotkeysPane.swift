@@ -80,6 +80,20 @@ struct HotkeysPane: View {
     var body: some View {
         let all = commands
         Form {
+            Section {} header: {
+                Previews(height: 130) {
+                    PreviewCard(caption: "Every shortcut is yours to change") {
+                        HStack(spacing: 10) {
+                            KeyCap("⌥")
+                            Text("+").font(.system(size: 18, weight: .bold, design: .rounded)).foregroundStyle(.white.opacity(0.7))
+                            KeyCap("H")
+                            Image(systemName: "arrow.right").font(.system(size: 14, weight: .bold)).foregroundStyle(tegiBlue).padding(.horizontal, 6)
+                            Friend(radius: 6).frame(width: 34, height: 50)
+                            Mascot(ringWidth: 2.5, radius: 6).frame(width: 40, height: 50)
+                        }
+                    }
+                }
+            }
             if let note {
                 Section {
                     Label(note, systemImage: "arrow.triangle.swap").foregroundStyle(.secondary)
@@ -88,7 +102,7 @@ struct HotkeysPane: View {
             ForEach(HotkeyGroup.allCases) { group in
                 let rows = all.filter { HotkeyGroup($0) == group }
                 if !rows.isEmpty {
-                    Section(group.rawValue) {
+                    Section {
                         ForEach(rows, id: \.words) { command in
                             LabeledContent(title(of: command)) {
                                 HStack(spacing: 6) {
@@ -108,7 +122,7 @@ struct HotkeysPane: View {
                                 }
                             }
                         }
-                    }
+                    } header: { Heading(group.rawValue) }
                 }
             }
             Section {
@@ -122,8 +136,9 @@ struct HotkeysPane: View {
                     record(command, replacing: nil)
                 }
             } footer: {
-                Text("Click a shortcut to change it, then press the new keys. Esc cancels; Delete removes it.")
+                Note("Click a shortcut to change it, then press the new keys. Esc cancels; Delete removes it.")
             }
+            Section {} footer: { PaneFooter() }
         }
         .formStyle(.grouped)
         .searchable(text: $search, placement: .toolbar, prompt: "Find a command or key")
@@ -187,5 +202,20 @@ struct HotkeysPane: View {
         }
         model.bind(r.command, from: r.old, to: combo)
         pending = nil
+    }
+}
+
+struct KeyCap: View {
+    let text: String
+    init(_ text: String) { self.text = text }
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: 18, weight: .semibold, design: .rounded))
+            .foregroundStyle(SwiftUI.Color(red: 0.15, green: 0.16, blue: 0.3))
+            .frame(width: 40, height: 40)
+            .background(LinearGradient(colors: [.white, SwiftUI.Color(red: 0.85, green: 0.87, blue: 0.95)], startPoint: .top, endPoint: .bottom),
+                        in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+            .shadow(color: .black.opacity(0.3), radius: 0, y: 2.5)
     }
 }

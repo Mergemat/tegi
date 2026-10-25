@@ -103,3 +103,9 @@ private func parsed(_ text: String) -> Config { try! Config.parse(text) }
     #expect(again.rules == config.rules)
     #expect(again.workspaces == config.workspaces)
 }
+
+@Test func settingsCanOpenOnAPane() {
+    #expect(Command(["show-settings"]) == .showSettings(nil))
+    #expect(Command(["show-settings", "hotkeys"]) == .showSettings("hotkeys"))
+    #expect(Command(Command.showSettings("motion").words) == .showSettings("motion"))
+}

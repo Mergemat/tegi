@@ -35,7 +35,7 @@ final class WindowManager {
     var paused = false
     var onChange: () -> Void = {}
     var onHotkeyOverlay: () -> Void = {}
-    var onSettings: () -> Void = {}
+    var onSettings: (String?) -> Void = { _ in }
     var onQuit: () -> Void = {}
 
     var workers: [pid_t: AppWorker] = [:]
@@ -165,7 +165,7 @@ final class WindowManager {
             if let id = focused, let win = wins[id] { win.worker.close(win.element) }
             return
         case .showHotkeyOverlay: return onHotkeyOverlay()
-        case .showSettings: return onSettings()
+        case .showSettings(let pane): return onSettings(pane)
         case .toggleOverview: return setOverview(!overview)
         case .openOverview: return setOverview(true)
         case .closeOverview: return setOverview(false)

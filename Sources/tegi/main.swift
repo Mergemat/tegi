@@ -28,6 +28,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let welcome = WelcomeWindow()
     private lazy var settingsModel: SettingsModel = {
         let model = SettingsModel(url: configURL)
+        model.onPermissions = { [weak self] in self?.welcome.show() }
         model.onRecording = { [weak self] recording in
             guard let self else { return }
             if recording { hotkeys?.unregisterAll() } else if let wm { bind(wm.config) }
@@ -46,10 +47,8 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
             source.resume()
             signals.append(source)
         }
-        if WelcomeWindow.needed {
-            welcome.onRestart = { [weak self] in self?.relaunch() }
-            welcome.show()
-        }
+        welcome.onRestart = { [weak self] in self?.relaunch() }
+        if WelcomeWindow.needed { welcome.show() }
         startWhenTrusted()
     }
 
@@ -78,7 +77,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self?.queueEvent()
         }
         wm.onQuit = { [weak self] in self?.quit() }
-        wm.onSettings = { [weak self] in self?.showSettings() }
+        wm.onSettings = { [weak self] pane in self?.showSettings(pane) }
         wm.onHotkeyOverlay = { [weak self] in
             guard let self, let wm = self.wm else { return }
             overlay.toggle(wm.config)
@@ -241,7 +240,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
             login.state = SMAppService.mainApp.status == .enabled ? .on : .off
             menu.addItem(login)
         }
-        menu.addItem(item("Settings…", #selector(showSettings), key: ","))
+        menu.addItem(item("Settings…", #selector(showSettingsFromMenu), key: ","))
         menu.addItem(item("Open Config", #selector(openConfig)))
         menu.addItem(item("Open Defaults", #selector(openDefaults)))
         menu.addItem(.separator())
@@ -267,7 +266,12 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func toggleOverview() { wm?.run(.toggleOverview) }
 
-    @objc private func showSettings() { settings.show() }
+    @objc private func showSettingsFromMenu() { showSettings(nil) }
+
+    private func showSettings(_ pane: String?) {
+        if let pane, Pane(rawValue: pane) != nil { UserDefaults.standard.set(pane, forKey: "settings.pane") }
+        settings.show()
+    }
 
     private func relaunch() {
         let reopen = Process()
