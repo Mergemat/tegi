@@ -9,12 +9,12 @@ final class Snapshots {
     // The check takes over 10 ms, too slow for a keypress.
     private(set) var allowed = CGPreflightScreenCaptureAccess()
 
-    func requestAccess() {
+    func refreshAccess(prompt: Bool) {
         DispatchQueue.global(qos: .utility).async {
             let ok = CGPreflightScreenCaptureAccess()
             DispatchQueue.main.async {
                 self.allowed = ok
-                if !ok { CGRequestScreenCaptureAccess() }
+                if !ok && prompt { CGRequestScreenCaptureAccess() }
             }
         }
     }

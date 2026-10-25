@@ -41,11 +41,11 @@ public enum Command: Equatable {
     case toggleWindowFloating, moveWindowToFloating, moveWindowToTiling
     case focusFloating, focusTiling, switchFocusBetweenFloatingAndTiling
     case focusWindowPrevious, nextWindow(sameApp: Bool), previousWindow(sameApp: Bool)
-    case closeWindow, showHotkeyOverlay
+    case closeWindow, showHotkeyOverlay, showSettings
     case toggleOverview, openOverview, closeOverview
     case spawn([String]), spawnSh(String), quit
 
-    static let simple: [String: Command] = [
+    public static let simple: [String: Command] = [
         "focus-column-left": .focusColumnLeft, "focus-column-right": .focusColumnRight,
         "focus-column-first": .focusColumnFirst, "focus-column-last": .focusColumnLast,
         "focus-column-right-or-first": .focusColumnRightOrFirst, "focus-column-left-or-last": .focusColumnLeftOrLast,
@@ -96,7 +96,7 @@ public enum Command: Equatable {
         "focus-floating": .focusFloating, "focus-tiling": .focusTiling,
         "switch-focus-between-floating-and-tiling": .switchFocusBetweenFloatingAndTiling,
         "focus-window-previous": .focusWindowPrevious,
-        "close-window": .closeWindow, "show-hotkey-overlay": .showHotkeyOverlay,
+        "close-window": .closeWindow, "show-hotkey-overlay": .showHotkeyOverlay, "show-settings": .showSettings,
         "toggle-overview": .toggleOverview, "open-overview": .openOverview, "close-overview": .closeOverview,
         "quit": .quit,
     ]
@@ -158,7 +158,7 @@ public enum Command: Equatable {
         switch self {
         case .toggleWindowFloating, .moveWindowToFloating, .moveWindowToTiling, .focusFloating, .focusTiling,
              .switchFocusBetweenFloatingAndTiling, .focusWindowPrevious, .nextWindow, .previousWindow, .closeWindow,
-             .showHotkeyOverlay, .toggleOverview, .openOverview, .closeOverview, .spawn, .spawnSh, .quit:
+             .showHotkeyOverlay, .showSettings, .toggleOverview, .openOverview, .closeOverview, .spawn, .spawnSh, .quit:
             return true
         default:
             return false

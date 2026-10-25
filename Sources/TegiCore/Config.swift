@@ -72,6 +72,11 @@ public struct WindowRule: Equatable {
 public struct NamedWorkspace: Equatable {
     public var name: String
     public var display: String?
+
+    public init(name: String, display: String? = nil) {
+        self.name = name
+        self.display = display
+    }
 }
 
 public struct Animations: Equatable {
@@ -89,6 +94,8 @@ public struct Animations: Equatable {
         .horizontalViewMovement: .view, .windowMovement: .view, .windowResize: .view,
         .workspaceSwitch: .workspace, .overviewOpenClose: .view,
     ]
+
+    public init() {}
 
     public func spring(_ name: Name) -> SpringParams? { on ? springs[name] : nil }
 }

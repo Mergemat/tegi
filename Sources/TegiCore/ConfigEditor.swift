@@ -13,6 +13,11 @@ public enum ConfigEditor {
         return with
     }
 
+    /// Whether the text has its own line for `key`, rather than using the default.
+    public static func has(_ key: [String], in text: String) -> Bool {
+        text.split(separator: "\n").contains { words($0).starts(with: key) }
+    }
+
     /// Replaces every line of a repeated setting (rule, workspace, spawn-at-startup) with `lines`.
     public static func setList(_ name: String, to lines: [[String]], in text: String) -> String {
         replace(in: text, where: { $0.first == name }, with: lines.map { ([name] + $0).joined(separator: " ") })
@@ -116,4 +121,24 @@ extension Command {
         default: return []
         }
     }
+}
+
+extension WindowRule {
+    /// The rule as written after `rule`.
+    public var words: [String] {
+        var w = [app ?? "*"]
+        if let title { w += ["title", title] }
+        if let floating { w.append(floating ? "float" : "tile") }
+        if let width { w += ["width", String(format: "%.5g", width)] }
+        if maximized == true { w.append("maximized") }
+        if let focused { w.append(focused ? "focused" : "unfocused") }
+        if let workspace { w += ["workspace", workspace] }
+        if let display { w += ["display", display] }
+        return w
+    }
+}
+
+extension NamedWorkspace {
+    /// The workspace as written after `workspace`.
+    public var words: [String] { [name] + (display.map { ["display", $0] } ?? []) }
 }

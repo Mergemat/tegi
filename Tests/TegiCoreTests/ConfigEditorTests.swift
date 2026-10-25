@@ -88,3 +88,18 @@ private func parsed(_ text: String) -> Config { try! Config.parse(text) }
     #expect(KeyCombo(keyCode: 33, mods: [.cmd])?.description == "cmd+bracketleft")
     #expect(KeyCombo(keyCode: 999, mods: []) == nil)
 }
+
+@Test func rulesAndWorkspacesWriteBackAsWhatTheyRead() throws {
+    let text = """
+    rule com.apple.calculator float
+    rule * title ^Picture-in-Picture$ tile width 0.4 maximized unfocused workspace chat display LG
+    workspace chat
+    workspace code display LG
+    """
+    let config = try Config.parse(text)
+    var rebuilt = ConfigEditor.setList("rule", to: config.rules.map(\.words), in: "")
+    rebuilt = ConfigEditor.setList("workspace", to: config.workspaces.map(\.words), in: rebuilt)
+    let again = try Config.parse(rebuilt)
+    #expect(again.rules == config.rules)
+    #expect(again.workspaces == config.workspaces)
+}

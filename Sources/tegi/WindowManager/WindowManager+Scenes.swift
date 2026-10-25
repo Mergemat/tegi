@@ -4,7 +4,7 @@ import TegiCore
 
 extension WindowManager {
     func startScenes() {
-        snapshots.requestAccess()
+        snapshots.refreshAccess(prompt: false)
         refreshWallpapers()
         rebuildScenes()
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
@@ -68,7 +68,7 @@ extension WindowManager {
         guard open != overview else { return }
         overview = open
         if open {
-            snapshots.requestAccess()
+            snapshots.refreshAccess(prompt: true)
             for (m, mon) in world.monitors.enumerated() {
                 guard let scene = scene(for: m) else { continue }
                 let content = sceneContent(m)

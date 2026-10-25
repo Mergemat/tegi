@@ -25,6 +25,16 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var problems: [String] = []
     private var watchers: [DispatchSourceFileSystemObject] = []
     private var signals: [DispatchSourceSignal] = []
+    private let welcome = WelcomeWindow()
+    private lazy var settingsModel: SettingsModel = {
+        let model = SettingsModel(url: configURL)
+        model.onRecording = { [weak self] recording in
+            guard let self else { return }
+            if recording { hotkeys?.unregisterAll() } else if let wm { bind(wm.config) }
+        }
+        return model
+    }()
+    private lazy var settings = SettingsWindow(model: settingsModel)
 
     func applicationDidFinishLaunching(_: Notification) {
         status.menu = NSMenu()
@@ -36,12 +46,15 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
             source.resume()
             signals.append(source)
         }
+        if WelcomeWindow.needed {
+            welcome.onRestart = { [weak self] in self?.relaunch() }
+            welcome.show()
+        }
         startWhenTrusted()
     }
 
     private func startWhenTrusted() {
-        let prompt = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
-        guard AXIsProcessTrustedWithOptions(prompt) else {
+        guard AXIsProcessTrusted() else {
             problems = ["Needs Accessibility access to move windows"]
             refresh()
             DistributedNotificationCenter.default().addObserver(forName: .init("com.apple.accessibility.api"), object: nil, queue: .main) { [weak self] _ in
@@ -65,6 +78,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self?.queueEvent()
         }
         wm.onQuit = { [weak self] in self?.quit() }
+        wm.onSettings = { [weak self] in self?.showSettings() }
         wm.onHotkeyOverlay = { [weak self] in
             guard let self, let wm = self.wm else { return }
             overlay.toggle(wm.config)
@@ -128,6 +142,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
             bind(config)
             wm.update(config)
         }
+        settingsModel.reload()
         refresh()
     }
 
@@ -226,6 +241,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
             login.state = SMAppService.mainApp.status == .enabled ? .on : .off
             menu.addItem(login)
         }
+        menu.addItem(item("Settings…", #selector(showSettings), key: ","))
         menu.addItem(item("Open Config", #selector(openConfig)))
         menu.addItem(item("Open Defaults", #selector(openDefaults)))
         menu.addItem(.separator())
@@ -250,6 +266,16 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func toggleOverview() { wm?.run(.toggleOverview) }
+
+    @objc private func showSettings() { settings.show() }
+
+    private func relaunch() {
+        let reopen = Process()
+        reopen.executableURL = URL(fileURLWithPath: "/bin/sh")
+        reopen.arguments = ["-c", "sleep 0.5; /usr/bin/open \"$0\"", Bundle.main.bundlePath]
+        try? reopen.run()
+        quit()
+    }
 
     @objc private func toggleLogin() {
         let service = SMAppService.mainApp
