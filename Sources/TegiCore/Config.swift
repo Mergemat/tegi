@@ -634,8 +634,27 @@ extension KeyCombo {
         return s + (names[key] ?? key.uppercased())
     }
 
+    public init?(keyCode: UInt32, mods: Mods) {
+        guard let key = KeyCombo.names[keyCode] else { return nil }
+        let order: [(Mods, String)] = [(.ctrl, "ctrl"), (.alt, "alt"), (.shift, "shift"), (.cmd, "cmd")]
+        let text = (order.filter { mods.contains($0.0) }.map(\.1) + [key]).joined(separator: "+")
+        self.init(keyCode: keyCode, mods: mods, key: key, description: text)
+    }
+
+    static let names = Dictionary(canonical.map { ($1, $0) }, uniquingKeysWith: { a, _ in a })
+
     static let codes: [String: UInt32] = {
-        var c: [String: UInt32] = [
+        var c = canonical
+        for (char, name) in ["=": "equal", "-": "minus", "]": "bracketright", "[": "bracketleft", "'": "quote",
+                             ";": "semicolon", "\\": "backslash", ",": "comma", "/": "slash", ".": "period", "`": "grave"] {
+            c[char] = c[name]
+        }
+        c["enter"] = c["return"]
+        return c
+    }()
+
+    private static let canonical: [String: UInt32] = {
+        let c: [String: UInt32] = [
             "a": 0, "s": 1, "d": 2, "f": 3, "h": 4, "g": 5, "z": 6, "x": 7, "c": 8, "v": 9,
             "b": 11, "q": 12, "w": 13, "e": 14, "r": 15, "y": 16, "t": 17, "o": 31, "u": 32,
             "i": 34, "p": 35, "l": 37, "j": 38, "k": 40, "n": 45, "m": 46,
@@ -648,11 +667,6 @@ extension KeyCombo {
             "f1": 122, "f2": 120, "f3": 99, "f4": 118, "f5": 96, "f6": 97,
             "f7": 98, "f8": 100, "f9": 101, "f10": 109, "f11": 103, "f12": 111,
         ]
-        for (char, name) in ["=": "equal", "-": "minus", "]": "bracketright", "[": "bracketleft", "'": "quote",
-                             ";": "semicolon", "\\": "backslash", ",": "comma", "/": "slash", ".": "period", "`": "grave"] {
-            c[char] = c[name]
-        }
-        c["enter"] = c["return"]
         return c
     }()
 }
