@@ -6,20 +6,37 @@ struct OverlaysPane: View {
 
     private static let corners: [(String, Corner?)] = [("Off", nil), ("↖", .topLeft), ("↗", .topRight), ("↙", .bottomLeft), ("↘", .bottomRight)]
     // Compared as written, like every number read back from the config.
+    private static let percent: (Double) -> String = { "\(Int(($0 * 100).rounded()))%" }
     private static let delays: [(String, String)] = [("At once", "0"), ("A moment", "0.15"), ("A beat longer", "0.35")]
 
     var body: some View {
         let c = model.shown
         CardTitle("Overview")
         Card {
-            OverviewScene(zoom: c.overviewZoom, backdrop: SwiftUI.Color(c.backdropColor))
+            OverviewScene(config: c)
                 .animation(.spring(duration: 0.35, bounce: 0.2), value: c.overviewZoom)
+                .animation(.spring(duration: 0.35, bounce: 0.2), value: c.overviewGap)
                 .frame(maxWidth: .infinity)
                 .padding(.top, Space.card)
                 .padding(.bottom, 6)
             SliderRow(title: "Zoom", detail: "How small workspaces get.", key: ["overview-zoom"], value: c.overviewZoom,
-                      range: 0.25...0.75, step: 0.05, format: { "\(Int(($0 * 100).rounded()))%" }, live: { $0.overviewZoom = $1 })
-            ColorRow(title: "Backdrop", key: ["backdrop-color"], color: c.backdropColor) { $0.backdropColor = $1 }
+                      range: 0.25...0.75, step: 0.05, format: Self.percent, live: { $0.overviewZoom = $1 })
+            SliderRow(title: "Space between", key: ["overview-gap"], value: c.overviewGap,
+                      range: 0...0.3, step: 0.02, format: Self.percent, live: { $0.overviewGap = $1 })
+            SliderRow(title: "Rounded corners", key: ["overview-workspace-radius"], value: c.overviewWorkspaceRadius,
+                      range: 0...30, format: { "\(Int($0.rounded())) pt" }, live: { $0.overviewWorkspaceRadius = $1 })
+            ToggleRow(title: "Workspace names", detail: "Their names, or numbers, in each corner.", key: ["overview-labels"],
+                      isOn: c.overviewLabels, on: ["on"], off: ["off"])
+            ToggleRow(title: "App icons", detail: "On each window, to tell them apart when small.", key: ["overview-icons"],
+                      isOn: c.overviewIcons, on: ["on"], off: ["off"])
+            Row(title: "Behind it", stacked: true) {
+                Choice(options: [("Your wallpaper, blurred", OverviewBackdrop.wallpaper), ("A color", .color)], selected: c.overviewBackdrop) {
+                    model.set(["overview-backdrop"], [$0.rawValue])
+                }
+            }
+            if c.overviewBackdrop == .color {
+                ColorRow(title: "Backdrop", key: ["backdrop-color"], color: c.backdropColor) { $0.backdropColor = $1 }
+            }
             Row(title: "Hot corner", detail: "Push the pointer into this corner to open it.", stacked: true, last: true) {
                 Choice(options: Self.corners, selected: c.hotCorner) { model.set(["hot-corner"], [$0?.rawValue ?? "off"]) }
             }

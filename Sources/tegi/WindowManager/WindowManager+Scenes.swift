@@ -41,6 +41,7 @@ extension WindowManager {
             shown[mon.id] = now
             if let scene = scenes[mon.id], scene.isVisible {
                 scene.update(sceneContent(m), animated: animate)
+                scene.setNames(workspaceNames(m))
                 if was?.id != now.id || overview { scene.slide(to: mon.active, velocity: slideVelocity) }
                 continue
             }
@@ -73,6 +74,7 @@ extension WindowManager {
                 guard let scene = scene(for: m) else { continue }
                 let content = sceneContent(m)
                 if !scene.isVisible { scene.show(content, at: Double(mon.active)) }
+                scene.setNames(workspaceNames(m))
                 scene.openOverview(needsAccess: !snapshots.allowed)
                 scene.update(content)
                 refreshSnapshots(content.flatMap { $0.map(\.id) })
@@ -156,6 +158,10 @@ extension WindowManager {
             scene.hide()
         }
         updateRing(at: CACurrentMediaTime())
+    }
+
+    func workspaceNames(_ m: Int) -> [String] {
+        world.monitors[m].workspaces.enumerated().map { i, ws in ws.name ?? "\(i + 1)" }
     }
 
     func sceneContent(_ m: Int) -> Scene.Content {

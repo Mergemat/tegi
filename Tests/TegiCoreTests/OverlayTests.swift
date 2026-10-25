@@ -24,3 +24,19 @@ import Testing
     #expect(try Config.parse("hotkey-overlay-at-startup never").hotkeyOverlayAtStartup == .never)
     #expect(Config.builtIn.hotkeyOverlayAtStartup == .firstTime)
 }
+
+@Test func theOverviewCanBeTunedToTaste() throws {
+    let c = try Config.parse("""
+    overview-gap 0.2
+    overview-workspace-radius 0
+    overview-labels off
+    overview-icons off
+    overview-backdrop color
+    """)
+    #expect(c.overviewGap == 0.2)
+    #expect(c.overviewWorkspaceRadius == 0)
+    #expect(!c.overviewLabels && !c.overviewIcons)
+    #expect(c.overviewBackdrop == .color)
+    let d = Config.builtIn
+    #expect(d.overviewGap == 0.1 && d.overviewWorkspaceRadius == 14 && d.overviewLabels && d.overviewIcons && d.overviewBackdrop == .wallpaper)
+}

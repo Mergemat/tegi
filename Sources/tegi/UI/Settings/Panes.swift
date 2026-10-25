@@ -357,33 +357,49 @@ struct LooksPane: View {
 }
 
 /// The overview in miniature, laid out as tegi lays it out: workspaces at the zoom, the current one centred, on the backdrop.
+/// The overview in miniature, laid out as tegi lays it out, from the settings as they're being changed.
 struct OverviewScene: View {
-    let zoom: Double
-    let backdrop: SwiftUI.Color
+    let config: Config
     private let screen = CGSize(width: 240, height: 150)
+    private static let paper = [SwiftUI.Color(hex: 0x5b7cff), SwiftUI.Color(hex: 0xb18cff)]
 
     var body: some View {
-        let step = screen.height * zoom * 1.1
+        let zoom = config.overviewZoom
+        let step = screen.height * zoom * (1 + config.overviewGap)
         ZStack {
             ForEach(-2...2, id: \.self) { i in
-                MiniWorkspace(current: i == 0)
+                MiniWorkspace(current: i == 0, number: i + 2, config: config)
                     .frame(width: screen.width, height: screen.height)
                     .scaleEffect(zoom)
                     .offset(y: Double(i) * step)
             }
         }
         .frame(width: screen.width, height: screen.height)
-        .background(backdrop)
+        .background {
+            if config.overviewBackdrop == .wallpaper {
+                LinearGradient(colors: Self.paper, startPoint: .topLeading, endPoint: .bottomTrailing)
+                    .blur(radius: 14)
+                    .overlay(SwiftUI.Color.black.opacity(0.12))
+            } else {
+                SwiftUI.Color(config.backdropColor)
+            }
+        }
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(.white.opacity(0.12)))
         .shadow(color: .black.opacity(0.25), radius: 10, y: 4)
     }
+
+    fileprivate static var wallpaper: LinearGradient { LinearGradient(colors: paper, startPoint: .topLeading, endPoint: .bottomTrailing) }
 }
 
 private struct MiniWorkspace: View {
     let current: Bool
+    let number: Int
+    let config: Config
 
     var body: some View {
+        // Drawn at full size and scaled down with the zoom, so sizes meant to show at the overview's scale divide by it.
+        let z = config.overviewZoom
         HStack(spacing: 10) {
             Friend(radius: 12).frame(width: 56)
             if current { Mascot(ringWidth: 4, radius: 13).frame(width: 84) } else { Friend(radius: 12).frame(width: 84) }
@@ -391,8 +407,18 @@ private struct MiniWorkspace: View {
         }
         .padding(.vertical, 20)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(LinearGradient(colors: [SwiftUI.Color(hex: 0x5b7cff), SwiftUI.Color(hex: 0xb18cff)], startPoint: .topLeading, endPoint: .bottomTrailing))
-        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .background(OverviewScene.wallpaper)
+        .overlay(alignment: .topLeading) {
+            if config.overviewLabels {
+                Text("\(number)")
+                    .font(.system(size: 8 / z, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 5 / z).padding(.vertical, 1.5 / z)
+                    .background(.black.opacity(0.35), in: Capsule())
+                    .padding(6 / z)
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: config.overviewWorkspaceRadius * 0.5 / z, style: .continuous))
     }
 }
 

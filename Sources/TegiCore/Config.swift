@@ -114,6 +114,7 @@ public enum Corner: String, CaseIterable {
     case topLeft = "top-left", topRight = "top-right", bottomLeft = "bottom-left", bottomRight = "bottom-right"
 }
 
+public enum OverviewBackdrop: String, CaseIterable { case wallpaper, color }
 public enum SwitcherShows: String, CaseIterable { case pictures, icons }
 public enum SwitcherWindows: String, CaseIterable { case everywhere, display, workspace }
 public enum AtStartup: String, CaseIterable { case firstTime = "first-time", always, never }
@@ -150,6 +151,13 @@ public struct Config: Equatable {
     public var swipeModifier: Mods = .alt
     public var overviewZoom = 0.5
     public var hotCorner: Corner? = .topLeft
+    /// Between workspaces in the overview, as a share of a workspace's height.
+    public var overviewGap = 0.1
+    /// In points as the overview shows them, whatever the zoom.
+    public var overviewWorkspaceRadius = 14.0
+    public var overviewLabels = true
+    public var overviewIcons = true
+    public var overviewBackdrop = OverviewBackdrop.wallpaper
     public var switcherShows = SwitcherShows.pictures
     public var switcherWindows = SwitcherWindows.everywhere
     /// Seconds ⌥Tab is held before the switcher shows, so a quick tap switches without it flashing.
@@ -381,6 +389,21 @@ public struct Config: Equatable {
                     guard let corner = Corner(rawValue: v) else { throw fail("hot-corner is top-left, top-right, bottom-left, bottom-right or off") }
                     config.hotCorner = corner
                 }
+            case "overview-gap":
+                config.overviewGap = try number(0...0.5, "overview-gap is between 0 and 0.5 of a workspace's height")
+            case "overview-workspace-radius":
+                config.overviewWorkspaceRadius = try number(0...40, "overview-workspace-radius is between 0 and 40 points")
+            case "overview-labels", "overview-icons":
+                let on: Bool
+                switch try one() {
+                case "on": on = true
+                case "off": on = false
+                default: throw fail("\(name) is on or off")
+                }
+                if name == "overview-labels" { config.overviewLabels = on } else { config.overviewIcons = on }
+            case "overview-backdrop":
+                guard let v = OverviewBackdrop(rawValue: try one()) else { throw fail("overview-backdrop is wallpaper or color") }
+                config.overviewBackdrop = v
             case "switcher-shows":
                 guard let v = SwitcherShows(rawValue: try one()) else { throw fail("switcher-shows is pictures or icons") }
                 config.switcherShows = v
@@ -543,10 +566,16 @@ public struct Config: Equatable {
     # radius, in points, for every window.
     window-corner-radius auto
 
-    # The overview shows every workspace at this scale, on this backdrop.
-    # Pushing the pointer into this corner of a display opens it: top-left,
-    # top-right, bottom-left, bottom-right or off.
+    # The overview shows every workspace at this scale, this far apart, with
+    # rounded corners, names and app icons. Behind them goes your wallpaper,
+    # blurred, or backdrop-color. Pushing the pointer into this corner of a
+    # display opens it: top-left, top-right, bottom-left, bottom-right or off.
     overview-zoom 0.5
+    overview-gap 0.1
+    overview-workspace-radius 14
+    overview-labels on
+    overview-icons on
+    overview-backdrop wallpaper
     backdrop-color #262626
     hot-corner top-left
 

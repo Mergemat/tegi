@@ -1,4 +1,5 @@
 import AppKit
+import CoreImage
 import QuartzCore
 import TegiCore
 
@@ -32,6 +33,8 @@ final class Scene: NSObject {
     private var depths: [WindowID: CGFloat] = [:]
     private let ring = CALayer()
     private let hint = CALayer()
+    private let backdrop = CALayer()
+    private var labels: [CATextLayer] = []
     private var notice: CATextLayer?
     private var index: Spring
     private var zoom: Spring
@@ -81,6 +84,10 @@ final class Scene: NSObject {
         root.frame = CGRect(origin: .zero, size: area.size)
         root.autoresizingMask = [.layerWidthSizable, .layerHeightSizable]
         root.backgroundColor = cgColor(config.backdropColor)
+        backdrop.frame = wallpaperFrame
+        backdrop.contentsGravity = .resizeAspectFill
+        backdrop.contents = backdropImage(wallpaper)
+        root.addSublayer(backdrop)
         host.addSublayer(root)
         panel.contentView = view
         view.onMouseDown = { [weak self] p in self?.mouseDown(p) }
@@ -105,9 +112,56 @@ final class Scene: NSObject {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         for ws in workspaces { ws.paper.contents = image }
+        backdrop.contents = backdropImage(image)
         CATransaction.commit()
     }
     var currentIndex: Double { index.value(at: CACurrentMediaTime()) }
+
+    private static let blur = CIContext()
+
+    // Blurred small: a quarter of the pixels is plenty for a blur, and keeps a new wallpaper cheap.
+    private func backdropImage(_ wallpaper: Any?) -> CGImage? {
+        guard config.overviewBackdrop == .wallpaper, let wallpaper else { return nil }
+        let image: CIImage
+        if CFGetTypeID(wallpaper as CFTypeRef) == IOSurfaceGetTypeID() {
+            image = CIImage(ioSurface: unsafeBitCast(wallpaper as AnyObject, to: IOSurfaceRef.self))
+        } else if CFGetTypeID(wallpaper as CFTypeRef) == CGImage.typeID {
+            image = CIImage(cgImage: wallpaper as! CGImage)
+        } else {
+            return nil
+        }
+        let small = image.transformed(by: CGAffineTransform(scaleX: 0.25, y: 0.25))
+        let soft = small.clampedToExtent().applyingGaussianBlur(sigma: 18).cropped(to: small.extent)
+            .applyingFilter("CIColorControls", parameters: [kCIInputBrightnessKey: -0.08, kCIInputSaturationKey: 1.1])
+        return Self.blur.createCGImage(soft, from: small.extent)
+    }
+
+    /// The names shown in each workspace's corner while the overview is open.
+    func setNames(_ names: [String]) {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        while labels.count < names.count {
+            let label = CATextLayer()
+            label.fontSize = 13
+            label.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
+            label.foregroundColor = CGColor(gray: 1, alpha: 1)
+            label.backgroundColor = CGColor(gray: 0, alpha: 0.35)
+            label.cornerRadius = 11
+            label.alignmentMode = .center
+            label.contentsScale = panel.backingScaleFactor
+            label.opacity = 0
+            root.addSublayer(label)
+            labels.append(label)
+        }
+        while labels.count > names.count { labels.removeLast().removeFromSuperlayer() }
+        for (label, name) in zip(labels, names) {
+            label.string = name
+            let width = (name as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 13, weight: .semibold)]).width
+            label.bounds = CGRect(x: 0, y: 0, width: ceil(width) + 20, height: 22)
+        }
+        CATransaction.commit()
+        place(at: CACurrentMediaTime())
+    }
 
     func show(_ content: Content, at index: Double) {
         update(content, animated: false)
@@ -192,7 +246,7 @@ final class Scene: NSObject {
     private func setContents(_ contents: Any, of card: CALayer) {
         card.contents = contents
         card.backgroundColor = nil
-        card.sublayers?.filter { $0 !== ring }.forEach { $0.removeFromSuperlayer() }
+        card.sublayers?.filter { $0 !== ring && $0.name != "badge" }.forEach { $0.removeFromSuperlayer() }
     }
 
     private func makeCard(_ win: Window) -> CALayer {
@@ -201,6 +255,21 @@ final class Scene: NSObject {
         card.cornerRadius = win.radius
         card.masksToBounds = false
         card.name = String(win.id)
+        if config.overviewIcons, let icon = win.icon {
+            // Sized so it shows at 26 points once the overview has zoomed out.
+            let side = 26 / config.overviewZoom, inset = 10 / config.overviewZoom
+            let badge = CALayer()
+            badge.name = "badge"
+            badge.contents = icon
+            badge.contentsGravity = .resizeAspect
+            badge.frame = CGRect(x: inset, y: inset, width: side, height: side)
+            badge.zPosition = 1
+            badge.opacity = 0
+            badge.shadowOpacity = 0.3
+            badge.shadowRadius = 3 / config.overviewZoom
+            badge.shadowOffset = CGSize(width: 0, height: -1 / config.overviewZoom)
+            card.addSublayer(badge)
+        }
         if let image = win.image {
             card.contents = image
         } else {
@@ -334,16 +403,30 @@ final class Scene: NSObject {
 
     private func place(at t: Double) {
         let z = zoom.value(at: t), r = index.value(at: t)
-        let w = size.width * z, h = size.height * z, gap = size.height * 0.1 * z
+        let w = size.width * z, h = size.height * z, gap = size.height * config.overviewGap * z
         let x = (size.width - w) / 2, top = (size.height - h) / 2
         let progress = config.overviewZoom < 1 ? min(max((1 - z) / (1 - config.overviewZoom), 0), 1) : 0
         CATransaction.begin()
         CATransaction.setDisableActions(true)
+        // Corners, names and icons belong to the overview, so they grow in with it and are gone at full size.
+        let radius = config.overviewWorkspaceRadius * progress / max(z, 0.01)
         for (i, ws) in workspaces.enumerated() {
             let y = (Double(i) - r) * (h + gap) + top
             ws.container.position = CGPoint(x: x, y: size.height - y)
             ws.container.transform = CATransform3DMakeScale(z, z, 1)
             ws.shadow.shadowOpacity = Float(progress * 0x50 / 255)
+            if ws.background.cornerRadius != radius {
+                ws.background.cornerRadius = radius
+                ws.shadow.shadowPath = CGPath(roundedRect: ws.container.bounds, cornerWidth: radius, cornerHeight: radius, transform: nil)
+            }
+            if labels.indices.contains(i) {
+                let label = labels[i]
+                label.position = CGPoint(x: x + 12 + label.bounds.width / 2, y: size.height - y - 12 - label.bounds.height / 2)
+                label.opacity = config.overviewLabels ? Float(progress) : 0
+            }
+        }
+        if config.overviewIcons {
+            for card in cards.values { card.sublayers?.first { $0.name == "badge" }?.opacity = Float(progress) }
         }
         CATransaction.commit()
     }
