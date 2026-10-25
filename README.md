@@ -32,7 +32,7 @@ swift build                  # debug build
 swift test                   # layout, config and spring tests
 ./scripts/app.sh run         # build tegi.app, quit the running tegi, start the new one
 .build/release/tegi          # run in the terminal to see its output (permissions then go to the terminal)
-./scripts/icon.sh            # rebuild Resources/AppIcon.icns from Resources/brand/app-icon.png
+./scripts/icon.sh            # compile Resources/AppIcon.icon into the app icon (needs Xcode)
 swift scripts/social.swift   # redraw the sharing images, og.png and social.png
 ```
 

@@ -1,13 +1,11 @@
 #!/bin/sh
-# Builds Resources/AppIcon.icns from the 1024 px artwork in Resources/brand/app-icon.png.
+# Compiles Resources/AppIcon.icon (Icon Composer format, full-bleed art that macOS masks itself)
+# into Resources/Assets.car, plus Resources/AppIcon.icns for macOS before 26. Needs Xcode.
 set -e
 cd "$(dirname "$0")/.."
-set_dir=$(mktemp -d)/AppIcon.iconset
-mkdir -p "$set_dir"
-for points in 16 32 128 256 512; do
-    sips -z $points $points Resources/brand/app-icon.png --out "$set_dir/icon_${points}x${points}.png" >/dev/null
-    sips -z $((points * 2)) $((points * 2)) Resources/brand/app-icon.png --out "$set_dir/icon_${points}x${points}@2x.png" >/dev/null
-done
-iconutil -c icns "$set_dir" -o Resources/AppIcon.icns
-rm -rf "$(dirname "$set_dir")"
-echo "Wrote Resources/AppIcon.icns"
+out=$(mktemp -d)
+xcrun actool "$PWD/Resources/AppIcon.icon" --compile "$out" --app-icon AppIcon --platform macosx \
+    --minimum-deployment-target 14.0 --output-partial-info-plist "$out/partial.plist" >/dev/null
+cp "$out/Assets.car" "$out/AppIcon.icns" Resources/
+rm -rf "$out"
+echo "Wrote Resources/Assets.car and Resources/AppIcon.icns"
