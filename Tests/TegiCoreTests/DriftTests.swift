@@ -14,6 +14,8 @@ private let laidOut = CGRect(x: 864, y: 49, width: 554, height: 1052)
     let kept = Refusal(asked: laidOut.size, got: CGSize(width: 554, height: 460))
     #expect(!Drift.strayed(CGRect(origin: laidOut.origin, size: kept.got), from: laidOut, refusal: kept))
     #expect(Drift.strayed(CGRect(origin: CGPoint(x: 0, y: 49), size: kept.got), from: laidOut, refusal: kept))
+    // A size the app once reported in passing doesn't make the right frame wrong.
+    #expect(!Drift.strayed(laidOut, from: laidOut, refusal: kept))
 }
 
 @Test func anAppThatKeepsMovingItsWindowIsLeftAlone() {

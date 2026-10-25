@@ -46,6 +46,7 @@ final class WindowManager {
     /// Sizes apps kept when asked for another, so what tegi draws around a window matches it.
     var refusals: [WindowID: Refusal] = [:]
     var drift: [WindowID: Drift] = [:]
+    var strays: [WindowID: DispatchWorkItem] = [:]
     var generation: [WindowID: Int] = [:]
     var unlanded: Set<WindowID> = []
     var hideWhenLanded: Set<UInt32> = []
@@ -461,6 +462,7 @@ final class WindowManager {
         applied[id] = nil
         refusals[id] = nil
         drift[id] = nil
+        strays.removeValue(forKey: id)?.cancel()
         verified.remove(id)
         floatHidden.remove(id)
         generation[id] = nil
@@ -512,7 +514,7 @@ final class WindowManager {
                     if event == .resized && frame.size != laidOut.size { resizedByUser.insert(id) }
                     return
                 }
-                putBack(id, from: frame, to: laidOut)
+                putBack(id, worker: worker, el: el)
             }
         case .created, .focused:
             break
@@ -520,12 +522,24 @@ final class WindowManager {
     }
 
     /// An app moved its own tiled window, often restoring a saved frame right after it opens: tegi puts it back.
-    func putBack(_ id: WindowID, from frame: CGRect, to laidOut: CGRect) {
-        // Mid-motion, the notifications are tegi's own frames landing; off screen, macOS keeps a hidden window's sliver its own way.
-        guard targets[id]?.visible == true, !unlanded.contains(id), !motion.isMoving, Drift.strayed(frame, from: laidOut, refusal: refusals[id]),
-              drift[id, default: Drift()].allow(at: CACurrentMediaTime()) else { return }
-        verified.remove(id)
-        send(id, laidOut)
+    func putBack(_ id: WindowID, worker: AppWorker, el: AXUIElement) {
+        // tegi's own frames can report late, so only a window that is still off once things have settled is the app's doing.
+        let gen = generation[id]
+        strays[id]?.cancel()
+        let check = DispatchWorkItem { [weak self] in
+            guard let self, generation[id] == gen, !unlanded.contains(id), !motion.isMoving else { return }
+            worker.read(el) { [weak self] info in
+                // Off screen, macOS keeps a hidden window's sliver its own way.
+                guard let self, generation[id] == gen, targets[id]?.visible == true, let frame = info?.frame, let laidOut = applied[id],
+                      Drift.strayed(frame, from: laidOut, refusal: refusals[id]),
+                      drift[id, default: Drift()].allow(at: CACurrentMediaTime()) else { return }
+                // One plain move and resize: the verifying path sets the size twice, which shows as a twitch.
+                applied[id] = nil
+                send(id: id, laidOut, verify: false)
+            }
+        }
+        strays[id] = check
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: check)
     }
 
     func suspend(_ win: Win, _ suspended: Bool) {

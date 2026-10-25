@@ -8,9 +8,11 @@ public struct Drift {
 
     /// Whether the window is no longer where tegi put it, beyond a size the app is known to keep.
     public static func strayed(_ actual: CGRect, from laidOut: CGRect, refusal: Refusal?) -> Bool {
-        let expected = refusal?.apply(to: laidOut) ?? laidOut
-        return abs(actual.minX - expected.minX) > 1 || abs(actual.minY - expected.minY) > 1
-            || abs(actual.width - expected.width) > 1 || abs(actual.height - expected.height) > 1
+        func off(_ expected: CGRect) -> Bool {
+            abs(actual.minX - expected.minX) > 1 || abs(actual.minY - expected.minY) > 1
+                || abs(actual.width - expected.width) > 1 || abs(actual.height - expected.height) > 1
+        }
+        return off(laidOut) && (refusal.map { off($0.apply(to: laidOut)) } ?? true)
     }
 
     /// Puts a window back a few times, then lets an app that insists keep its frame instead of fighting it forever.
