@@ -45,6 +45,7 @@ final class WindowManager {
     var applied: [WindowID: CGRect] = [:]
     /// Sizes apps kept when asked for another, so what tegi draws around a window matches it.
     var refusals: [WindowID: Refusal] = [:]
+    var drift: [WindowID: Drift] = [:]
     var generation: [WindowID: Int] = [:]
     var unlanded: Set<WindowID> = []
     var hideWhenLanded: Set<UInt32> = []
@@ -459,6 +460,7 @@ final class WindowManager {
         ids[win.element] = nil
         applied[id] = nil
         refusals[id] = nil
+        drift[id] = nil
         verified.remove(id)
         floatHidden.remove(id)
         generation[id] = nil
@@ -500,17 +502,30 @@ final class WindowManager {
         case .moved, .resized:
             if win.floating { return floatingMoved(win) }
             let mouseDown = NSEvent.pressedMouseButtons & 1 != 0
-            guard mouseDown || event == .resized, grab?.window != id else { return }
+            guard grab?.window != id else { return }
             worker.read(el) { [weak self] info in
                 guard let self, let info, wins[id] != nil else { return }
                 if info.fullscreen != win.suspended && !info.minimized { return suspend(win, info.fullscreen) }
-                guard mouseDown, let frame = info.frame, frame != applied[id] else { return }
-                dragged[id] = frame
-                if event == .resized && frame.size != applied[id]?.size { resizedByUser.insert(id) }
+                guard let frame = info.frame, let laidOut = applied[id], frame != laidOut else { return }
+                if mouseDown {
+                    dragged[id] = frame
+                    if event == .resized && frame.size != laidOut.size { resizedByUser.insert(id) }
+                    return
+                }
+                putBack(id, from: frame, to: laidOut)
             }
         case .created, .focused:
             break
         }
+    }
+
+    /// An app moved its own tiled window, often restoring a saved frame right after it opens: tegi puts it back.
+    func putBack(_ id: WindowID, from frame: CGRect, to laidOut: CGRect) {
+        // Mid-motion, the notifications are tegi's own frames landing; off screen, macOS keeps a hidden window's sliver its own way.
+        guard targets[id]?.visible == true, !unlanded.contains(id), !motion.isMoving, Drift.strayed(frame, from: laidOut, refusal: refusals[id]),
+              drift[id, default: Drift()].allow(at: CACurrentMediaTime()) else { return }
+        verified.remove(id)
+        send(id, laidOut)
     }
 
     func suspend(_ win: Win, _ suspended: Bool) {
