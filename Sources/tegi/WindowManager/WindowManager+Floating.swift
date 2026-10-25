@@ -142,7 +142,7 @@ extension WindowManager {
 extension WindowManager {
     func openSwitcher(forward: Bool, sameApp: Bool) {
         if recent.isOpen { return recent.step(forward ? 1 : -1) }
-        var ids = recent.ordered(wins.values.filter { !$0.suspended }.map(\.id))
+        var ids = recent.ordered(wins.values.filter { !$0.suspended && !snapshots.blank.contains($0.id) }.map(\.id))
         if let current = focused, let i = ids.firstIndex(of: current) { ids.insert(ids.remove(at: i), at: 0) }
         if sameApp, let pid = focused.flatMap({ wins[$0] })?.worker.pid { ids = ids.filter { wins[$0]?.worker.pid == pid } }
         if config.switcherWindows != .everywhere {
@@ -165,6 +165,7 @@ extension WindowManager {
         let list = ids.compactMap { id in wins[id].map { (id: id, windowID: $0.windowID) } }
         snapshots.refresh(list, scale: NSScreen.main?.backingScaleFactor ?? 2) { [weak self] id in
             guard let self, let image = snapshots.images[id] else { return }
+            if snapshots.blank.contains(id) { return recent.drop(id) }
             recent.setImage(image, for: id)
         }
     }

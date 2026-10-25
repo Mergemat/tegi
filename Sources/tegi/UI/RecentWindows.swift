@@ -75,6 +75,16 @@ final class RecentWindows {
         panel?.show(s.items, selected: s.selected)
     }
 
+    /// Takes a window out of an open switcher, keeping the same one picked.
+    func drop(_ id: WindowID) {
+        guard var s = session, let i = s.items.firstIndex(where: { $0.id == id }) else { return }
+        s.items.remove(at: i)
+        guard s.items.count > 1 else { return finish(commit: false) }
+        if i < s.selected || s.selected == s.items.count { s.selected -= 1 }
+        session = s
+        panel?.show(s.items, selected: s.selected)
+    }
+
     func step(_ delta: Int) {
         guard var s = session else { return }
         s.selected = (s.selected + delta + s.items.count) % s.items.count
@@ -189,34 +199,31 @@ private final class SwitcherModel: ObservableObject {
 private struct SwitcherView: View {
     static let pad = 16.0, spacing = 14.0, label = 30.0, peek = 18.0
     @ObservedObject var model: SwitcherModel
-    @Namespace private var tiles
 
     var body: some View {
-        let picked = model.items.indices.contains(model.selected) ? model.items[model.selected] : nil
         ZStack(alignment: .topLeading) {
             if model.mascot { Mascot(ringWidth: 0, radius: 7).frame(width: 28, height: 32).offset(x: mascotX - 14, y: 0) }
-            VStack(spacing: 10) {
-                HStack(spacing: Self.spacing) {
-                    ForEach(Array(model.items.enumerated()), id: \.element.id) { i, item in
-                        thumb(item, size: model.sizes.indices.contains(i) ? model.sizes[i] : .zero)
-                            .matchedGeometryEffect(id: item.id, in: tiles)
+            HStack(alignment: .top, spacing: Self.spacing) {
+                ForEach(Array(model.items.enumerated()), id: \.element.id) { i, item in
+                    let size = model.sizes.indices.contains(i) ? model.sizes[i] : .zero
+                    let picked = i == model.selected
+                    VStack(spacing: 10) {
+                        thumb(item, size: size)
+                            .overlay {
+                                RoundedRectangle(cornerRadius: 15, style: .continuous)
+                                    .strokeBorder(model.ring, lineWidth: 3)
+                                    .padding(-5)
+                                    .opacity(picked ? 1 : 0)
+                            }
+                        if model.names {
+                            // Under its own window, cut to the window's width so the row keeps its size.
+                            Text(picked ? (item.title.isEmpty ? item.app : item.title) : " ")
+                                .font(.system(size: 13, weight: .semibold, design: .rounded))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .frame(width: size.width, height: Self.label - 10)
+                        }
                     }
-                }
-                .overlay {
-                    if let picked {
-                        RoundedRectangle(cornerRadius: 15, style: .continuous)
-                            .strokeBorder(model.ring, lineWidth: 3)
-                            .padding(-5)
-                            .matchedGeometryEffect(id: picked.id, in: tiles, isSource: false)
-                    }
-                }
-                if model.names {
-                    Text(picked.map { $0.title.isEmpty ? $0.app : $0.title } ?? "")
-                        .font(.system(size: 13, weight: .semibold, design: .rounded))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .frame(maxWidth: 480)
-                        .frame(height: Self.label - 10)
                 }
             }
             .padding(Self.pad)

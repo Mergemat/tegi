@@ -16,4 +16,13 @@ public enum Corners {
         guard clear < side * side else { return nil }
         return (Double(clear) / (1 - .pi / 4)).squareRoot()
     }
+
+    /// Whether a window's picture shows nothing at all, like the invisible helper windows some apps keep.
+    /// Every eighth pixel each way is enough to catch even a lone button.
+    public static func isBlank(width: Int, height: Int, alpha: (Int, Int) -> UInt8) -> Bool {
+        for y in stride(from: 0, to: height, by: 8) {
+            for x in stride(from: 0, to: width, by: 8) where alpha(x, y) > 8 { return false }
+        }
+        return true
+    }
 }

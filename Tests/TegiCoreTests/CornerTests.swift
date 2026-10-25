@@ -27,3 +27,10 @@ private func rounded(_ w: Int, _ h: Int, _ r: Double) -> (Int, Int) -> UInt8 {
     let terminal: (Int, Int) -> UInt8 = { x, y in y == 30 && x < 40 ? 255 : 0 }
     #expect(Corners.radius(width: 400, height: 300, alpha: terminal) == nil)
 }
+
+@Test func aFullyClearPictureIsBlankButAnyContentIsNot() {
+    #expect(Corners.isBlank(width: 400, height: 300) { _, _ in 0 })
+    #expect(!Corners.isBlank(width: 400, height: 300, alpha: rounded(400, 300, 16)))
+    // A small opaque patch, like a lone button on a clear window, still counts as content.
+    #expect(!Corners.isBlank(width: 400, height: 300) { x, y in (200..<230).contains(x) && (150..<170).contains(y) ? 255 : 0 })
+}
