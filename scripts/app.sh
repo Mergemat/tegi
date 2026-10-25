@@ -1,30 +1,57 @@
 #!/bin/sh
 # Builds tegi.app, so macOS asks for Accessibility and Screen Recording for
 # tegi itself rather than for the terminal it was started from.
-# With "run", also quits the running tegi and starts the new build.
+#
+#   ./scripts/app.sh          build .build/tegi.app
+#   ./scripts/app.sh run      build, quit the running tegi, start the new one
+#
+#   VERSION=0.1.0             version to stamp (default: dev)
+#   UNIVERSAL=1               build for Apple silicon and Intel
+#   SIGN_IDENTITY="Developer ID Application: …"   sign for distribution (default: ad-hoc)
 set -e
 cd "$(dirname "$0")/.."
-swift build -c release
+
+bundle_id=io.github.mergemat.tegi
+version=${VERSION:-dev}
+arch_flags=""
+[ "$UNIVERSAL" = 1 ] && arch_flags="--arch arm64 --arch x86_64"
+
+swift build -c release $arch_flags
+bin="$(swift build -c release $arch_flags --show-bin-path)/tegi"
+
 app=.build/tegi.app
 rm -rf "$app"
-mkdir -p "$app/Contents/MacOS"
-cp .build/release/tegi "$app/Contents/MacOS/tegi"
+mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
+cp "$bin" "$app/Contents/MacOS/tegi"
+cp Resources/AppIcon.icns "$app/Contents/Resources/"
 cat > "$app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>CFBundleIdentifier</key><string>dev.tegi</string>
+    <key>CFBundleIdentifier</key><string>$bundle_id</string>
     <key>CFBundleName</key><string>tegi</string>
+    <key>CFBundleDisplayName</key><string>tegi</string>
     <key>CFBundleExecutable</key><string>tegi</string>
+    <key>CFBundleIconFile</key><string>AppIcon</string>
     <key>CFBundlePackageType</key><string>APPL</string>
-    <key>CFBundleShortVersionString</key><string>0.1</string>
+    <key>CFBundleShortVersionString</key><string>$version</string>
+    <key>CFBundleVersion</key><string>$version</string>
     <key>LSMinimumSystemVersion</key><string>14.0</string>
+    <key>LSApplicationCategoryType</key><string>public.app-category.productivity</string>
     <key>LSUIElement</key><true/>
 </dict>
 </plist>
 PLIST
-codesign --force --sign - --identifier dev.tegi "$app"
+
+if [ -n "$SIGN_IDENTITY" ]; then
+    codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" --identifier "$bundle_id" "$app"
+else
+    # An ad-hoc signature otherwise pins permissions to this exact build, so every
+    # update would silently lose Accessibility and Screen Recording.
+    codesign --force --sign - --identifier "$bundle_id" \
+        --requirements "=designated => identifier \"$bundle_id\"" "$app"
+fi
 
 if [ "$1" = run ]; then
     .build/release/tegi msg quit 2>/dev/null || true
@@ -37,5 +64,5 @@ if [ "$1" = run ]; then
     open "$app"
     echo "Started $app"
 else
-    echo "Built $app. Start it with: open $app (or ./scripts/app.sh run)"
+    echo "Built $app ($version)"
 fi
