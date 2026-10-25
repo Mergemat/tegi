@@ -1,8 +1,11 @@
+<p align="center"><img src="Resources/brand/logo.png" width="180" alt=""></p>
+
 # tegi
 
 Scrollable tiling for macOS. Windows sit in columns on a strip that scrolls sideways, and opening a window never resizes the others. Each display has its own workspaces stacked vertically, with one empty workspace always at the bottom.
 
 ```sh
+brew trust mergemat/tap
 brew install mergemat/tap/tegi
 ```
 
@@ -30,6 +33,7 @@ swift test                   # layout, config and spring tests
 ./scripts/app.sh run         # build tegi.app, quit the running tegi, start the new one
 .build/release/tegi          # run in the terminal to see its output (permissions then go to the terminal)
 swift scripts/icon.swift     # redraw Resources/AppIcon.icns
+swift scripts/social.swift   # redraw the repository's social preview image
 ```
 
 - `Sources/TegiCore` is the layout model, config parser and springs: plain Swift with no macOS window APIs, so it's what the tests cover.
