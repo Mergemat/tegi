@@ -24,6 +24,7 @@ final class Scene: NSObject {
 
     private let panel: ScenePanel
     private let view = SceneView()
+    private let host = CALayer()
     private let root = CALayer()
     private var workspaces: [WorkspaceLayers] = []
     private var cards: [WindowID: CALayer] = [:]
@@ -72,10 +73,14 @@ final class Scene: NSObject {
         panel.level = NSWindow.Level(rawValue: NSWindow.Level.floating.rawValue + 1)
         panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle, .fullScreenNone]
         panel.ignoresMouseEvents = true
-        // A layer-hosting view needs its layer before wantsLayer.
-        view.layer = root
+        // A layer-hosting view needs its layer before wantsLayer. AppKit owns that layer and may unhide it,
+        // so everything visible lives one level down, where only tegi shows and hides it.
+        view.layer = host
         view.wantsLayer = true
+        root.frame = CGRect(origin: .zero, size: area.size)
+        root.autoresizingMask = [.layerWidthSizable, .layerHeightSizable]
         root.backgroundColor = cgColor(config.backdropColor)
+        host.addSublayer(root)
         panel.contentView = view
         view.onMouseDown = { [weak self] p in self?.mouseDown(p) }
         view.onMouseDragged = { [weak self] p in self?.mouseDragged(p) }
