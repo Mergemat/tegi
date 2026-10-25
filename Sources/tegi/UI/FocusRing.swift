@@ -22,7 +22,7 @@ final class FocusRing {
     private final class Overlay {
         let window = NSWindow(contentRect: .zero, styleMask: .borderless, backing: .buffered, defer: false)
         let ring = CALayer()
-        var last: (frame: CGRect, active: Bool)?
+        var last: Drawn?
 
         init() {
             window.isOpaque = false
@@ -38,6 +38,14 @@ final class FocusRing {
             window.contentView = view
             ring.isHidden = true
         }
+    }
+
+    // Everything the ring is drawn from, so a settings change redraws it even when focus stays put.
+    private struct Drawn: Equatable {
+        var frame: CGRect
+        var color: Color
+        var width: Double
+        var radius: Double
     }
 
     private var overlays: [UInt32: Overlay] = [:]
@@ -84,14 +92,16 @@ final class FocusRing {
         show(overlay, on: screen)
         let w = config.focusRingWidth
         let rect = local(frame, in: target.screen).insetBy(dx: -w, dy: -w)
-        if !overlay.ring.isHidden, let last = overlay.last, last.frame == rect, last.active == target.active { return }
-        overlay.last = (rect, target.active)
+        let color = target.active ? config.focusRingColor : config.focusRingInactiveColor
+        let drawn = Drawn(frame: rect, color: color, width: w, radius: config.windowCornerRadius)
+        if !overlay.ring.isHidden, overlay.last == drawn { return }
+        overlay.last = drawn
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         overlay.ring.frame = rect
         overlay.ring.borderWidth = w
         overlay.ring.cornerRadius = config.windowCornerRadius + w
-        overlay.ring.borderColor = cgColor(target.active ? config.focusRingColor : config.focusRingInactiveColor)
+        overlay.ring.borderColor = cgColor(color)
         overlay.ring.isHidden = false
         CATransaction.commit()
     }
