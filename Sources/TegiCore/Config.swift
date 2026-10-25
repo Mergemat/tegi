@@ -12,6 +12,14 @@ public struct Mods: OptionSet, Hashable {
     public static let alt = Mods(rawValue: 2)
     public static let ctrl = Mods(rawValue: 4)
     public static let shift = Mods(rawValue: 8)
+    public static let meh: Mods = [.ctrl, .alt, .shift]
+    public static let hyper: Mods = [.ctrl, .alt, .shift, .cmd]
+
+    /// The keys `mod+self` stands for. A mod that already holds Shift can't add it, so its Shift layer is ⌥⇧.
+    public func under(_ mod: Mods) -> Mods { contains(.shift) && mod.contains(.shift) ? union(.alt) : union(mod) }
+
+    /// As a config names it: alt, ctrl+alt, hyper.
+    public var text: String { String(KeyCombo(keyCode: 0, mods: self)!.description.dropLast(2)) }
 }
 
 public struct KeyCombo: Hashable, CustomStringConvertible {
@@ -152,7 +160,44 @@ public struct Config: Equatable {
         for r in rules where r.matches(app: app, title: title) { merged.merge(r) }
         return merged
     }
-    public var binds: [KeyCombo: Command] = [:]
+    /// Your key: shortcuts written as mod+… use it, and move with it.
+    public var mod: Mods = .alt
+    /// Shortcuts written on your key, by the keys pressed besides it.
+    var onMod: [KeyCombo: Command] = [:]
+    var fixed: [KeyCombo: Command] = [:]
+
+    public var binds: [KeyCombo: Command] {
+        var all: [KeyCombo: Command] = [:]
+        for (shape, command) in onMod {
+            if let combo = KeyCombo(keyCode: shape.keyCode, mods: shape.mods.under(mod)) { all[combo] = command }
+        }
+        return all.merging(fixed) { _, fixed in fixed }
+    }
+
+    /// The keys a config line names: mod+… is resolved against your key.
+    static func combo(_ text: String, mod: Mods) -> (combo: KeyCombo, shape: KeyCombo?)? {
+        let parts = text.lowercased().split(separator: "+", omittingEmptySubsequences: false)
+        guard parts.first == "mod" else { return KeyCombo(text).map { ($0, nil) } }
+        guard let shape = KeyCombo(parts.dropFirst().joined(separator: "+")),
+              let combo = KeyCombo(keyCode: shape.keyCode, mods: shape.mods.under(mod)) else { return nil }
+        return (combo, shape)
+    }
+
+    /// How a config line names `combo`: on your key when it's there, so it moves when your key does.
+    static func written(_ combo: KeyCombo, mod: Mods) -> String {
+        let extras = [combo.mods.isSuperset(of: mod) ? combo.mods.subtracting(mod) : nil,
+                      mod.contains(.shift) && combo.mods.isSuperset(of: [.alt, .shift]) ? combo.mods.subtracting(.alt) : nil]
+        for case let extra? in extras where extra.under(mod) == combo.mods {
+            guard let shape = KeyCombo(keyCode: combo.keyCode, mods: extra) else { break }
+            return "mod+" + shape.description
+        }
+        return combo.description
+    }
+
+    static func modifiers(_ text: String) -> Mods? {
+        guard let combo = KeyCombo(text + "+a"), !combo.mods.isEmpty else { return nil }
+        return combo.mods
+    }
 
     public init() {}
 
@@ -162,7 +207,13 @@ public struct Config: Equatable {
         var config = base
         var seen: [String: Int] = [:]
         var bound: Set<KeyCombo> = []
-        for (index, raw) in text.split(separator: "\n", omittingEmptySubsequences: false).enumerated() {
+        let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
+        // Every mod+… line means the same key wherever the mod line sits.
+        for raw in lines {
+            let words = raw.split(whereSeparator: \.isWhitespace)
+            if words.count == 2, words[0] == "mod", let mod = modifiers(String(words[1])) { config.mod = mod }
+        }
+        for (index, raw) in lines.enumerated() {
             let line = index + 1
             var words: [String] = []
             for word in raw.split(whereSeparator: \.isWhitespace) {
@@ -276,13 +327,15 @@ public struct Config: Equatable {
                     }
                 }
                 config.animations.springs[anim] = spring
+            case "mod":
+                guard modifiers(try one()) != nil else { throw fail("mod is alt, ctrl+alt, cmd+alt, hyper, meh, or another combination") }
             case "swipe-modifier":
                 let v = try one()
                 if v == "off" {
                     config.swipeModifier = []
                 } else {
-                    guard let combo = KeyCombo(v + "+a"), !combo.mods.isEmpty else { throw fail("swipe-modifier is alt, ctrl, cmd, shift, a combination like alt+shift, or off") }
-                    config.swipeModifier = combo.mods
+                    guard let mods = modifiers(v) else { throw fail("swipe-modifier is alt, ctrl, cmd, shift, a combination like alt+shift, or off") }
+                    config.swipeModifier = mods
                 }
             case "three-finger-swipe":
                 switch try one() {
@@ -369,23 +422,32 @@ public struct Config: Equatable {
                 config.emptyWorkspaceAboveFirst = try flag()
             case "bind":
                 guard args.count >= 2 else { throw fail("write bind <keys> <command>") }
-                guard let combo = KeyCombo(args[0]) else { throw fail("unknown keys \(args[0])") }
+                guard let keys = combo(args[0], mod: config.mod) else { throw fail("unknown keys \(args[0])") }
                 guard let command = Command(args.dropFirst()) else { throw fail("unknown command \(args.dropFirst().joined(separator: " "))") }
-                guard bound.insert(combo).inserted else { throw fail("\(args[0]) is bound twice") }
-                config.binds[combo] = command
+                guard bound.insert(keys.combo).inserted else { throw fail("\(args[0]) is bound twice") }
+                config.unbind(keys.combo)
+                if let shape = keys.shape { config.onMod[shape] = command } else { config.fixed[keys.combo] = command }
             case "unbind":
                 let keys = try one()
                 if keys == "all" {
-                    config.binds = [:]
+                    config.onMod = [:]
+                    config.fixed = [:]
                 } else {
-                    guard let combo = KeyCombo(keys) else { throw fail("unknown keys \(keys)") }
-                    guard config.binds.removeValue(forKey: combo) != nil else { throw fail("\(keys) isn't bound") }
+                    guard let resolved = combo(keys, mod: config.mod) else { throw fail("unknown keys \(keys)") }
+                    guard config.unbind(resolved.combo) else { throw fail("\(keys) isn't bound") }
                 }
             default:
                 throw fail("unknown setting \(name)")
             }
         }
         return config
+    }
+
+    @discardableResult
+    private mutating func unbind(_ combo: KeyCombo) -> Bool {
+        let shapes = onMod.keys.filter { KeyCombo(keyCode: $0.keyCode, mods: $0.mods.under(mod)) == combo }
+        for shape in shapes { onMod[shape] = nil }
+        return fixed.removeValue(forKey: combo) != nil || !shapes.isEmpty
     }
 
     public static let defaultsText = """
@@ -503,91 +565,96 @@ public struct Config: Equatable {
 
     # KEYS
     #
-    # Option moves focus, Option+Shift moves things. A bound Option+letter no
-    # longer types its special character. In your config, bind replaces a
-    # binding, unbind <keys> removes one, and unbind all starts from nothing.
+    # Your key moves focus, and with Shift it takes the window along. mod is
+    # alt, ctrl+alt, cmd+alt, hyper (⌃⌥⇧⌘, often Caps Lock) or meh (⌃⌥⇧);
+    # a key that already holds Shift takes the window with ⌥⇧ instead. A bound
+    # Option+letter no longer types its special character. In your config,
+    # bind replaces a binding, unbind <keys> removes one, and unbind all
+    # starts from nothing.
 
-    bind alt+shift+slash show-hotkey-overlay
-    bind alt+o toggle-overview
-    bind alt+q close-window
+    mod alt
+
+    bind mod+shift+slash show-hotkey-overlay
+    bind mod+o toggle-overview
+    bind mod+q close-window
 
     # Focus
-    bind alt+h focus-column-left
-    bind alt+l focus-column-right
-    bind alt+j focus-window-down
-    bind alt+k focus-window-up
-    bind alt+home focus-column-first
-    bind alt+end focus-column-last
+    bind mod+h focus-column-left
+    bind mod+l focus-column-right
+    bind mod+j focus-window-down
+    bind mod+k focus-window-up
+    bind mod+home focus-column-first
+    bind mod+end focus-column-last
 
     # Move
-    bind alt+shift+h move-column-left
-    bind alt+shift+l move-column-right
-    bind alt+shift+j move-window-down
-    bind alt+shift+k move-window-up
-    bind alt+shift+home move-column-to-first
-    bind alt+shift+end move-column-to-last
+    bind mod+shift+h move-column-left
+    bind mod+shift+l move-column-right
+    bind mod+shift+j move-window-down
+    bind mod+shift+k move-window-up
+    bind mod+shift+home move-column-to-first
+    bind mod+shift+end move-column-to-last
 
     # Workspaces
-    bind alt+u focus-workspace-down
-    bind alt+i focus-workspace-up
-    bind alt+shift+u move-column-to-workspace-down
-    bind alt+shift+i move-column-to-workspace-up
+    bind mod+u focus-workspace-down
+    bind mod+i focus-workspace-up
+    bind mod+shift+u move-column-to-workspace-down
+    bind mod+shift+i move-column-to-workspace-up
     # bind alt+ctrl+tab focus-workspace-previous
-    bind alt+1 focus-workspace 1
-    bind alt+2 focus-workspace 2
-    bind alt+3 focus-workspace 3
-    bind alt+4 focus-workspace 4
-    bind alt+5 focus-workspace 5
-    bind alt+6 focus-workspace 6
-    bind alt+7 focus-workspace 7
-    bind alt+8 focus-workspace 8
-    bind alt+9 focus-workspace 9
-    bind alt+shift+1 move-column-to-workspace 1
-    bind alt+shift+2 move-column-to-workspace 2
-    bind alt+shift+3 move-column-to-workspace 3
-    bind alt+shift+4 move-column-to-workspace 4
-    bind alt+shift+5 move-column-to-workspace 5
-    bind alt+shift+6 move-column-to-workspace 6
-    bind alt+shift+7 move-column-to-workspace 7
-    bind alt+shift+8 move-column-to-workspace 8
-    bind alt+shift+9 move-column-to-workspace 9
+    bind mod+1 focus-workspace 1
+    bind mod+2 focus-workspace 2
+    bind mod+3 focus-workspace 3
+    bind mod+4 focus-workspace 4
+    bind mod+5 focus-workspace 5
+    bind mod+6 focus-workspace 6
+    bind mod+7 focus-workspace 7
+    bind mod+8 focus-workspace 8
+    bind mod+9 focus-workspace 9
+    bind mod+shift+1 move-column-to-workspace 1
+    bind mod+shift+2 move-column-to-workspace 2
+    bind mod+shift+3 move-column-to-workspace 3
+    bind mod+shift+4 move-column-to-workspace 4
+    bind mod+shift+5 move-column-to-workspace 5
+    bind mod+shift+6 move-column-to-workspace 6
+    bind mod+shift+7 move-column-to-workspace 7
+    bind mod+shift+8 move-column-to-workspace 8
+    bind mod+shift+9 move-column-to-workspace 9
 
     # Displays
-    bind alt+n focus-monitor-next
-    bind alt+p focus-monitor-previous
-    bind alt+shift+n move-column-to-monitor-next
-    bind alt+shift+p move-column-to-monitor-previous
+    bind mod+n focus-monitor-next
+    bind mod+p focus-monitor-previous
+    bind mod+shift+n move-column-to-monitor-next
+    bind mod+shift+p move-column-to-monitor-previous
 
     # Columns
-    bind alt+bracketleft consume-or-expel-window-left
-    bind alt+bracketright consume-or-expel-window-right
-    bind alt+comma consume-window-into-column
-    bind alt+period expel-window-from-column
-    bind alt+w toggle-column-tabbed-display
+    bind mod+bracketleft consume-or-expel-window-left
+    bind mod+bracketright consume-or-expel-window-right
+    bind mod+comma consume-window-into-column
+    bind mod+period expel-window-from-column
+    bind mod+w toggle-column-tabbed-display
 
     # Sizes
-    bind alt+r switch-preset-column-width
-    bind alt+shift+r switch-preset-column-width-back
-    bind alt+f maximize-column
-    bind alt+shift+f fullscreen-window
-    bind alt+e expand-column-to-available-width
-    bind alt+c center-column
-    bind alt+shift+c center-visible-columns
-    bind alt+minus set-column-width -10%
-    bind alt+equal set-column-width +10%
-    bind alt+shift+minus set-window-height -10%
-    bind alt+shift+equal set-window-height +10%
+    bind mod+r switch-preset-column-width
+    bind mod+shift+r switch-preset-column-width-back
+    bind mod+f maximize-column
+    bind mod+shift+f fullscreen-window
+    bind mod+e expand-column-to-available-width
+    bind mod+c center-column
+    bind mod+shift+c center-visible-columns
+    bind mod+minus set-column-width -10%
+    bind mod+equal set-column-width +10%
+    bind mod+shift+minus set-window-height -10%
+    bind mod+shift+equal set-window-height +10%
 
     # Floating
-    bind alt+v toggle-window-floating
-    bind alt+shift+v switch-focus-between-floating-and-tiling
+    bind mod+v toggle-window-floating
+    bind mod+shift+v switch-focus-between-floating-and-tiling
 
     # Recent windows: hold Option and press Tab to go back through the windows
     # you used last; ` does the same within the app you're in.
-    bind alt+tab next-window
-    bind alt+shift+tab previous-window
-    bind alt+grave next-window same-app
-    bind alt+shift+grave previous-window same-app
+    bind mod+tab next-window
+    bind mod+shift+tab previous-window
+    bind mod+grave next-window same-app
+    bind mod+shift+grave previous-window same-app
 
     # Launch programs, for example:
     #   bind alt+t spawn open -a Terminal
@@ -616,7 +683,7 @@ public struct Config: Equatable {
 }
 
 extension KeyCombo {
-    init?(_ text: String) {
+    public init?(_ text: String) {
         let parts = text.lowercased().split(separator: "+", omittingEmptySubsequences: false).map(String.init)
         guard let key = parts.last, let code = KeyCombo.codes[key] else { return nil }
         var mods: Mods = []
@@ -627,20 +694,25 @@ extension KeyCombo {
             case "alt", "option", "opt": mod = .alt
             case "ctrl", "control": mod = .ctrl
             case "shift": mod = .shift
+            case "hyper": mod = .hyper
+            case "meh": mod = .meh
             default: return nil
             }
-            guard !mods.contains(mod) else { return nil }
-            mods.insert(mod)
+            guard mods.isDisjoint(with: mod) else { return nil }
+            mods.formUnion(mod)
         }
         self.init(keyCode: code, mods: mods, key: key, description: text)
     }
 
     public var symbol: String {
         var s = ""
-        if mods.contains(.ctrl) { s += "⌃" }
-        if mods.contains(.alt) { s += "⌥" }
-        if mods.contains(.shift) { s += "⇧" }
-        if mods.contains(.cmd) { s += "⌘" }
+        if mods == .hyper { s = "✦" }
+        else if mods.contains(.ctrl) { s += "⌃" }
+        if mods != .hyper {
+            if mods.contains(.alt) { s += "⌥" }
+            if mods.contains(.shift) { s += "⇧" }
+            if mods.contains(.cmd) { s += "⌘" }
+        }
         let names = ["left": "←", "right": "→", "up": "↑", "down": "↓", "home": "↖", "end": "↘",
                      "pageup": "⇞", "pagedown": "⇟", "tab": "⇥", "return": "↩", "enter": "↩", "space": "Space",
                      "escape": "⎋", "backspace": "⌫", "delete": "⌦", "bracketleft": "[", "bracketright": "]",
@@ -651,7 +723,9 @@ extension KeyCombo {
 
     public init?(keyCode: UInt32, mods: Mods) {
         guard let key = KeyCombo.names[keyCode] else { return nil }
-        let order: [(Mods, String)] = [(.ctrl, "ctrl"), (.alt, "alt"), (.shift, "shift"), (.cmd, "cmd")]
+        let order: [(Mods, String)] = mods == .hyper ? [(.hyper, "hyper")]
+            : mods.isSuperset(of: .meh) ? [(.meh, "meh"), (.cmd, "cmd")]
+            : [(.ctrl, "ctrl"), (.alt, "alt"), (.shift, "shift"), (.cmd, "cmd")]
         let text = (order.filter { mods.contains($0.0) }.map(\.1) + [key]).joined(separator: "+")
         self.init(keyCode: keyCode, mods: mods, key: key, description: text)
     }

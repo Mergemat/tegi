@@ -23,6 +23,19 @@ public enum ConfigEditor {
         replace(in: text, where: { $0.first == name }, with: lines.map { ([name] + $0).joined(separator: " ") })
     }
 
+    /// Switches your key, carrying every shortcut already on the old one along.
+    public static func setMod(_ mod: Mods, in text: String) -> String {
+        let old = (try? Config.parse(text))?.mod ?? Config.builtIn.mod
+        var lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        for i in lines.indices {
+            let w = words(Substring(lines[i]))
+            guard ["bind", "unbind"].contains(w.first), w.count > 1, let keys = Config.combo(w[1], mod: old), keys.shape == nil,
+                  let at = lines[i].range(of: w[1]) else { continue }
+            lines[i].replaceSubrange(at, with: Config.written(keys.combo, mod: old))
+        }
+        return set(["mod"], to: [mod.text], in: lines.joined(separator: "\n"))
+    }
+
     /// Moves `command` from the `old` keys to the `new` ones; either may be nil to only add or only remove.
     public static func bind(_ command: Command, from old: KeyCombo?, to new: KeyCombo?, in text: String) -> String {
         var text = text
@@ -32,12 +45,14 @@ public enum ConfigEditor {
     }
 
     private static func keys(_ combo: KeyCombo, run command: Command?, in text: String) -> String {
+        let mod = (try? Config.parse(text))?.mod ?? Config.builtIn.mod
         let stripped = replace(in: text, where: { words in
-            ["bind", "unbind"].contains(words.first) && words.count > 1 && KeyCombo(words[1]) == combo
+            ["bind", "unbind"].contains(words.first) && words.count > 1 && Config.combo(words[1], mod: mod)?.combo == combo
         }, with: [])
         let current = (try? Config.parse(stripped))?.binds[combo]
         if current == command { return stripped }
-        let line = command.map { "bind \(combo.description) " + $0.words.joined(separator: " ") } ?? "unbind \(combo.description)"
+        let keys = Config.written(combo, mod: mod)
+        let line = command.map { "bind \(keys) " + $0.words.joined(separator: " ") } ?? "unbind \(keys)"
         return replace(in: stripped, where: { _ in false }, with: [line])
     }
 
