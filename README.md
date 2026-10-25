@@ -2,33 +2,37 @@
 
 # tegi
 
-niri's scrollable tiling, on macOS. Windows sit in columns on a strip that scrolls sideways, and opening a window never resizes the others. Each display has its own workspaces stacked vertically, with one empty workspace always at the bottom. No SIP changes, no macOS Spaces.
+niri's scrollable tiling, on macOS. Columns on a strip that scrolls sideways, workspaces stacked vertically, nothing ever squished. No SIP changes.
+
+<p align="center"><img src="https://github.com/Mergemat/tegi/releases/download/v0.3.1/tegi-demo.gif" alt="Windows tiling on a scrolling strip, stacking into columns, moving between workspaces, and the overview"></p>
 
 ```sh
 brew trust mergemat/tap
 brew install mergemat/tap/tegi
 ```
 
-tegi starts right away and at every login. A welcome window asks for Accessibility (to move windows) and Screen Recording (for workspace slides and the overview). The config is `~/.config/tegi/config`; every default, with what it does, is in `~/.config/tegi/defaults`. Saved changes apply right away, and a broken line keeps the last good config while a banner says which line.
+| | |
+|---|---|
+| `mod` + `H` `J` `K` `L` | move focus; add `Shift` to take the window along |
+| `mod` + `U` `I` | workspace below, above |
+| `mod` + `O` | overview: every workspace, drag windows between them |
+| `mod` + `R` · `F` | cycle column widths · maximize the column |
+| `mod` + `,` `.` | pull a window into the column · push it back out |
+| three fingers | scroll the strip, switch workspaces; four up for the overview |
 
-**Coming from niri:** options and actions keep niri's names (`center-focused-column`, `preset-column-widths`, `default-column-display`, `focus-column-left`, `consume-or-expel-window-left`, `move-column-to-workspace-down` and the rest), in a plain line-per-setting file instead of KDL.
+`mod` is Option, or any combination you pick: Hyper with or without Shift works as Raycast, Hyperkey and Karabiner send it.
 
-- **Your key:** every default shortcut is `mod+…`, and `mod` is Option, Control-Option, Command-Option, or a Hyper key with or without Shift (as Raycast, Hyperkey and Karabiner send it). With mod, H J K L move focus; add Shift to take the window along.
-- **Motion:** windows glide on springs when the strip scrolls, columns move or sizes change, and workspaces slide vertically. Every animation's spring is configurable.
-- **Overview:** mod+O, a hot corner or a four-finger swipe up zooms out to every workspace. Drag windows between workspaces there. Zoom, spacing, corners, names, app icons and a blurred-wallpaper backdrop are all settings.
-- **Gestures:** three fingers scroll the strip or switch workspaces. Hold Option (`swipe-modifier`) and two fingers or a mouse wheel do the same; Option+drag moves a window, Option+right-drag resizes it.
-- **Window rules:** per app or title, float or tile, set a width, open on a named workspace or display, open maximized, or don't take focus. New windows open right or left of the focused one, or at either end.
-- **Apps that fight back:** a window the app moves or resizes on its own goes back in its column, and one that keeps its own size (video players, fixed-size apps) gets a ring that fits it.
-- **mod+Tab:** recent windows on a quiet strip, from everywhere, one display or one workspace.
-- **Settings:** a window with every option in it, writing the same plain-text config.
-- **Scripting:** `tegi msg action <command>` runs any action, `tegi msg state` prints the layout as JSON, `tegi msg event-stream` prints it on every change, and `tegi validate` checks a config.
+- **niri's names:** `center-focused-column`, `preset-column-widths`, `focus-column-left`, `move-column-to-workspace-down` and the rest, one setting per line in `~/.config/tegi/config`. Saved changes apply live.
+- **Settings window:** every option, writing that same file.
+- **Rules:** per app or title, float or tile, width, workspace, display, focus.
+- **Stubborn apps:** a window an app moves on its own goes back in its column; one that keeps its own size gets a ring that fits it.
+- **Scripting:** `tegi msg action <command>`, `tegi msg state`, `tegi msg event-stream`.
 
 ## Limits macOS imposes
 
-- Hidden windows keep a sliver visible in a bottom corner, because macOS won't let a window go fully off screen. Quitting or pausing tegi puts them back; after a crash, drag them out.
-- Windows don't fade in or out, and nothing is clipped at a display's edge: tegi can't change another app's opacity or clip its window.
-- Workspace slides, the overview and the switcher show pictures of your windows, taken as you leave a window and every few seconds while you work (twice a second in the overview). Live capture would put macOS's screen-sharing indicator in the menu bar.
-- Use one macOS Space per display. tegi workspaces replace Spaces.
+- Off-screen windows keep a sliver in a bottom corner; macOS won't hide a window fully. Quitting tegi puts them back.
+- Slides and the overview show pictures of windows, not live video, so the screen-sharing indicator stays off.
+- One macOS Space per display: tegi's workspaces replace Spaces.
 
 ## Development
 
