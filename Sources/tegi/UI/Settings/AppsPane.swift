@@ -141,9 +141,11 @@ struct RuleCard: View {
                 }
             }
             Row(title: "Width", stacked: true) {
-                Choice(options: [("Default", nil), ("33%", 1.0 / 3), ("50%", 0.5), ("67%", 2.0 / 3), ("Full", 1)] as [(String, Double?)], selected: rule.width) { v in
+                // Compared as written, so 1/3 matches the 0.33333 a saved rule reads back as.
+                let widths: [(String, Double?)] = [("Default", nil), ("33%", 1.0 / 3), ("50%", 0.5), ("67%", 2.0 / 3), ("Full", 1)]
+                Choice(options: widths.map { ($0.0, $0.1.map(number)) }, selected: rule.width.map(number)) { v in
                     var r = rule
-                    r.width = v
+                    r.width = v.flatMap { Double($0) }
                     change(r)
                 }
             }
