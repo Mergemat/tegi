@@ -24,6 +24,8 @@ final class SettingsModel: ObservableObject {
 
     func reload() {
         let read = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
+        // Unchanged, it would only redraw every page for nothing.
+        guard read != text else { return }
         text = read
         do {
             config = try Config.parse(read)

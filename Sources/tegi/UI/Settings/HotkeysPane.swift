@@ -83,6 +83,8 @@ private struct Pair {
 struct HotkeysPane: View {
     @EnvironmentObject var model: SettingsModel
     @Environment(\.colorScheme) private var scheme
+    // Off while another page is showing; this page stays built behind it.
+    @Environment(\.isEnabled) private var showing
     @State private var search = ""
     @State private var recording: Recording?
     @State private var pending: Command?
@@ -161,7 +163,9 @@ struct HotkeysPane: View {
         } else {
             ForEach(Topic.allCases) { topic in section(topic) }
         }
-        Spacer(minLength: 0).onDisappear { stop() }
+        Spacer(minLength: 0)
+            .onDisappear { stop() }
+            .onChange(of: showing) { if !showing { stop() } }
     }
 
     private static let column: CGFloat = 132
@@ -568,8 +572,9 @@ struct Keymap {
         func id(_ c: Command) -> String { c.words.joined(separator: " ") }
         var seen: Set<String> = [], titles: [String: String] = [:]
         let all = (Array(Command.simple.values) + config.binds.values).filter { seen.insert(id($0)).inserted }
-        for c in all { titles[id(c)] = tegi.title(of: c) }
-        commands = all.sorted { titles[id($0)]!.localizedStandardCompare(titles[id($1)]!) == .orderedAscending }
+        let named = all.map { (command: $0, title: tegi.title(of: $0)) }
+        for n in named { titles[id(n.command)] = n.title }
+        commands = named.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }.map(\.command)
         keys = Dictionary(grouping: config.binds, by: { id($0.value) }).mapValues { $0.map(\.key).sorted { $0.description < $1.description } }
         self.titles = titles
     }

@@ -123,6 +123,8 @@ struct SettingsView: View {
     @ObservedObject var model: SettingsModel
     @Environment(\.colorScheme) private var scheme
     @AppStorage("settings.pane") private var pane: Pane = .layout
+    /// Pages stay built once seen, so going back is only showing them again.
+    @State private var visited: Set<Pane> = []
 
     var body: some View {
         let t = Theme(scheme)
@@ -160,7 +162,7 @@ struct SettingsView: View {
                 }
                 RailItem(pane: p, selected: p == pane) {
                     guard p != pane else { return }
-                    withAnimation(.easeOut(duration: 0.18)) { pane = p }
+                    withAnimation(.easeOut(duration: 0.12)) { pane = p }
                 }
             }
             Spacer(minLength: 0)
@@ -169,6 +171,25 @@ struct SettingsView: View {
     }
 
     private func page(_ t: Theme) -> some View {
+        ZStack {
+            ForEach(Pane.allCases.filter { visited.contains($0) || $0 == pane }) { p in
+                scroll(p, t)
+                    .opacity(p == pane ? 1 : 0)
+                    .allowsHitTesting(p == pane)
+                    .disabled(p != pane)
+                    .accessibilityHidden(p != pane)
+            }
+        }
+        .onAppear { visited.insert(pane) }
+        .onChange(of: pane) { visited.insert(pane) }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(t.page, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).strokeBorder(t.edge))
+        .shadow(color: .black.opacity(t.night ? 0.3 : 0.08), radius: 16, y: 6)
+    }
+
+    private func scroll(_ pane: Pane, _ t: Theme) -> some View {
         ScrollView {
             // Lazy, so a long page measures only the cards on screen.
             LazyVStack(alignment: .leading, spacing: 0) {
@@ -193,22 +214,14 @@ struct SettingsView: View {
                         .padding(.horizontal, 16)
                         .padding(.bottom, Space.between)
                 }
-                content
+                content(pane)
                 Footer()
             }
         }
         .scrollIndicators(.never)
-        .id(pane)
-        // A fade, not a slide: moving a whole page relays it out on every frame.
-        .transition(.opacity)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(t.page, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
-        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).strokeBorder(t.edge))
-        .shadow(color: .black.opacity(t.night ? 0.3 : 0.08), radius: 16, y: 6)
     }
 
-    @ViewBuilder private var content: some View {
+    @ViewBuilder private func content(_ pane: Pane) -> some View {
         switch pane {
         case .layout: LayoutPane()
         case .workspaces: WorkspacesPane()
