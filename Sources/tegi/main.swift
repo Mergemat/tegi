@@ -7,9 +7,9 @@ let configURL = FileManager.default.homeDirectoryForCurrentUser.appending(path: 
 let defaultsURL = configURL.deletingLastPathComponent().appending(path: "defaults")
 let installed = Bundle.main.bundlePath.hasPrefix("/Applications/")
 // The Homebrew command is a symlink into the app, so the bundle is found from the resolved path.
-let version = Bundle(url: URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath()
-    .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent())?
-    .infoDictionary?["CFBundleShortVersionString"] as? String ?? "dev"
+let version = (Bundle.main.executableURL?.resolvingSymlinksInPath()
+    .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent())
+    .flatMap(Bundle.init(url:))?.infoDictionary?["CFBundleShortVersionString"] as? String ?? "dev"
 
 final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let status = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
