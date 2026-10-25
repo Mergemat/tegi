@@ -132,7 +132,6 @@ struct SettingsView: View {
         .tint(SwiftUI.Color(hex: 0x4f9dff))
     }
 
-    // Sections are workspaces: the one you're on shows the mascot in its middle column.
     private var rail: some View {
         VStack(spacing: 3) {
             ForEach(Pane.allCases) { p in
@@ -209,19 +208,12 @@ struct RailItem: View {
     var body: some View {
         let t = Theme(scheme)
         HStack(spacing: 9) {
-            Group {
-                if selected {
-                    Mascot(ringWidth: 0, radius: 7)
-                } else {
-                    Image(systemName: pane.symbol)
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundStyle(.white)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .background(LinearGradient(colors: [pane.tint.opacity(0.8), pane.tint], startPoint: .top, endPoint: .bottom),
-                                    in: RoundedRectangle(cornerRadius: 7, style: .continuous))
-                }
-            }
-            .frame(width: 22, height: 22)
+            Image(systemName: pane.symbol)
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(.white)
+                .frame(width: 22, height: 22)
+                .background(LinearGradient(colors: [pane.tint.opacity(0.8), pane.tint], startPoint: .top, endPoint: .bottom),
+                            in: RoundedRectangle(cornerRadius: 7, style: .continuous))
             Text(pane.title)
                 .font(.system(size: 12.5, weight: .semibold, design: .rounded))
                 .foregroundStyle(selected ? t.text : t.railText)
