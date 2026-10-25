@@ -169,6 +169,7 @@ final class WindowManager {
         case .toggleOverview: return setOverview(!overview)
         case .openOverview: return setOverview(true)
         case .closeOverview: return setOverview(false)
+        case .spawn(let args) where args.count == 3 && args[0] == "open" && args[1] == "-b": return openApp(args[2])
         case .spawn(let args): return spawn(args)
         case .spawnSh(let line): return spawn(["/bin/sh", "-c", line])
         case .quit: return onQuit()
@@ -178,6 +179,16 @@ final class WindowManager {
         world.perform(command, config: config)
         relayout(measuringFrom: start)
         if world.focusedWindow != before && !overview { focusModel() }
+    }
+
+    /// What `open -b` does, without its process and LaunchServices round trip: a window tegi already holds is focused at once.
+    func openApp(_ bundleID: String) {
+        // A hidden or minimized app needs macOS to bring it back, so those take the slow way.
+        let mine = wins.values.filter { $0.worker.bundleID == bundleID && !$0.suspended }
+            .filter { NSRunningApplication(processIdentifier: $0.worker.pid)?.isHidden != true }.map(\.id)
+        if let id = recent.ordered(mine).first { return focusWindow(id) }
+        guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else { return spawn(["open", "-b", bundleID]) }
+        NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration())
     }
 
     func spawn(_ args: [String]) {
