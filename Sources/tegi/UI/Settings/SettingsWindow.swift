@@ -78,6 +78,19 @@ enum Pane: String, CaseIterable, Identifiable {
         }
     }
 
+    var symbol: String {
+        switch self {
+        case .layout: "rectangle.split.3x1.fill"
+        case .workspaces: "square.stack.3d.up.fill"
+        case .looks: "paintbrush.pointed.fill"
+        case .motion: "wand.and.stars"
+        case .gestures: "hand.draw.fill"
+        case .hotkeys: "command"
+        case .apps: "app.badge.fill"
+        case .about: "heart.fill"
+        }
+    }
+
     var tint: SwiftUI.Color {
         switch self {
         case .layout: SwiftUI.Color(hex: 0x5aa8ff)
@@ -121,7 +134,7 @@ struct SettingsView: View {
 
     // Sections are workspaces: the one you're on shows the mascot in its middle column.
     private var rail: some View {
-        VStack(spacing: 9) {
+        VStack(spacing: 3) {
             ForEach(Pane.allCases) { p in
                 RailItem(pane: p, selected: p == pane) {
                     guard p != pane else { return }
@@ -131,7 +144,7 @@ struct SettingsView: View {
             }
             Spacer(minLength: 0)
         }
-        .frame(width: 124)
+        .frame(width: 140)
     }
 
     private func page(_ t: Theme) -> some View {
@@ -197,32 +210,31 @@ struct RailItem: View {
 
     var body: some View {
         let t = Theme(scheme)
-        VStack(alignment: .leading, spacing: 5) {
-            HStack(spacing: 3) {
+        HStack(spacing: 9) {
+            Group {
                 if selected {
-                    Friend(radius: 5, face: false).opacity(0.85)
-                    Mascot(ringWidth: 1.5, radius: 5)
-                    Friend(radius: 5, face: false).opacity(0.85)
+                    Mascot(ringWidth: 0, radius: 7)
                 } else {
-                    ForEach(0..<3, id: \.self) { i in
-                        RoundedRectangle(cornerRadius: 5, style: .continuous).fill(pane.tint.opacity(i == 1 ? 0.55 : 0.35))
-                    }
+                    Image(systemName: pane.symbol)
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(.white)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .background(LinearGradient(colors: [pane.tint.opacity(0.8), pane.tint], startPoint: .top, endPoint: .bottom),
+                                    in: RoundedRectangle(cornerRadius: 7, style: .continuous))
                 }
             }
-            .frame(height: 24)
-            HStack(spacing: 5) {
-                RoundedRectangle(cornerRadius: 2.5, style: .continuous).fill(pane.tint).frame(width: 8, height: 8)
-                Text(pane.title).font(.system(size: 10.5, weight: .bold, design: .rounded))
-                    .foregroundStyle(selected ? t.text : t.railText)
-            }
-            .padding(.leading, 2)
+            .frame(width: 22, height: 22)
+            Text(pane.title)
+                .font(.system(size: 12.5, weight: .semibold, design: .rounded))
+                .foregroundStyle(selected ? t.text : t.railText)
+            Spacer(minLength: 0)
         }
-        .padding(7)
-        .background(selected ? (t.night ? tegiBlue.opacity(0.16) : .white) : t.rail, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
-            .strokeBorder(selected ? tegiBlue.opacity(t.night ? 0.7 : 1) : .white.opacity(t.night ? 0 : 0.9), lineWidth: selected ? 2 : 1))
-        .shadow(color: selected ? SwiftUI.Color(hex: 0x4f9dff, opacity: t.night ? 0 : 0.25) : .clear, radius: 8, y: 3)
-        .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(selected ? (t.night ? tegiBlue.opacity(0.16) : .white) : .clear, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 11, style: .continuous).strokeBorder(selected ? tegiBlue.opacity(t.night ? 0.65 : 1) : .clear, lineWidth: 1.5))
+        .shadow(color: selected && !t.night ? SwiftUI.Color(hex: 0x4f9dff, opacity: 0.2) : .clear, radius: 6, y: 2)
+        .contentShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
         .onTapGesture(perform: tap)
     }
 }
