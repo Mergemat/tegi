@@ -14,6 +14,7 @@ final class SettingsModel: ObservableObject {
     let url: URL
     var onRecording: (Bool) -> Void = { _ in }
     var onPermissions: () -> Void = {}
+    var onCheatSheet: () -> Void = {}
 
     init(url: URL) {
         self.url = url

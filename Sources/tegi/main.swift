@@ -29,6 +29,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private lazy var settingsModel: SettingsModel = {
         let model = SettingsModel(url: configURL)
         model.onPermissions = { [weak self] in self?.welcome.show() }
+        model.onCheatSheet = { [weak self] in self?.showHotkeys() }
         model.onRecording = { [weak self] recording in
             guard let self else { return }
             if recording { hotkeys?.unregisterAll() } else if let wm { bind(wm.config) }
@@ -92,9 +93,10 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         ipc = IPC.Server { [weak self] in self?.handle($0) ?? "error: tegi is starting" }
         watchConfig()
         refresh()
+        let cheatSheet = wm.config.hotkeyOverlayAtStartup
+        if cheatSheet == .always || (cheatSheet == .firstTime && firstRun) { overlay.show(wm.config) }
         if firstRun {
             if installed { try? SMAppService.mainApp.register() }
-            overlay.show(wm.config)
             banner.show("Created a config at ~/.config/tegi/config", for: 8)
         }
     }

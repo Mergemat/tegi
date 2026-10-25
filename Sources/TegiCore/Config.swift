@@ -110,6 +110,14 @@ public struct Animations: Equatable {
     public func spring(_ name: Name) -> SpringParams? { on ? springs[name] : nil }
 }
 
+public enum Corner: String, CaseIterable {
+    case topLeft = "top-left", topRight = "top-right", bottomLeft = "bottom-left", bottomRight = "bottom-right"
+}
+
+public enum SwitcherShows: String, CaseIterable { case pictures, icons }
+public enum SwitcherWindows: String, CaseIterable { case everywhere, display, workspace }
+public enum AtStartup: String, CaseIterable { case firstTime = "first-time", always, never }
+
 public struct Struts: Equatable {
     public var left = 0.0, right = 0.0, top = 0.0, bottom = 0.0
 
@@ -141,7 +149,13 @@ public struct Config: Equatable {
     public var animations = Animations()
     public var swipeModifier: Mods = .alt
     public var overviewZoom = 0.5
-    public var hotCorner = true
+    public var hotCorner: Corner? = .topLeft
+    public var switcherShows = SwitcherShows.pictures
+    public var switcherWindows = SwitcherWindows.everywhere
+    /// Seconds ⌥Tab is held before the switcher shows, so a quick tap switches without it flashing.
+    public var switcherDelay = 0.15
+    public var switcherMascot = true
+    public var hotkeyOverlayAtStartup = AtStartup.firstTime
     public var threeFingerSwipe = true
     public var focusFollowsMouse: Double?
     public var warpMouseToFocus = false
@@ -358,11 +372,32 @@ public struct Config: Equatable {
             case "warp-mouse-to-focus":
                 config.warpMouseToFocus = try flag()
             case "hot-corner":
-                switch try one() {
-                case "on": config.hotCorner = true
-                case "off": config.hotCorner = false
-                default: throw fail("hot-corner is on or off")
+                let v = try one()
+                if v == "off" {
+                    config.hotCorner = nil
+                } else if v == "on" {
+                    config.hotCorner = .topLeft
+                } else {
+                    guard let corner = Corner(rawValue: v) else { throw fail("hot-corner is top-left, top-right, bottom-left, bottom-right or off") }
+                    config.hotCorner = corner
                 }
+            case "switcher-shows":
+                guard let v = SwitcherShows(rawValue: try one()) else { throw fail("switcher-shows is pictures or icons") }
+                config.switcherShows = v
+            case "switcher-windows":
+                guard let v = SwitcherWindows(rawValue: try one()) else { throw fail("switcher-windows is everywhere, display or workspace") }
+                config.switcherWindows = v
+            case "switcher-delay":
+                config.switcherDelay = try number(0...1, "switcher-delay is between 0 and 1 second")
+            case "switcher-mascot":
+                switch try one() {
+                case "on": config.switcherMascot = true
+                case "off": config.switcherMascot = false
+                default: throw fail("switcher-mascot is on or off")
+                }
+            case "hotkey-overlay-at-startup":
+                guard let v = AtStartup(rawValue: try one()) else { throw fail("hotkey-overlay-at-startup is first-time, always or never") }
+                config.hotkeyOverlayAtStartup = v
             case "overview-zoom":
                 config.overviewZoom = try number(0.1...0.75, "overview-zoom must be between 0.1 and 0.75")
             case "backdrop-color":
@@ -509,10 +544,22 @@ public struct Config: Equatable {
     window-corner-radius auto
 
     # The overview shows every workspace at this scale, on this backdrop.
-    # Pushing the pointer into the top-left corner of a display opens it.
+    # Pushing the pointer into this corner of a display opens it: top-left,
+    # top-right, bottom-left, bottom-right or off.
     overview-zoom 0.5
     backdrop-color #262626
-    hot-corner on
+    hot-corner top-left
+
+    # The window switcher (next-window) shows window pictures or app icons,
+    # from everywhere, this display or this workspace. It waits this many
+    # seconds so a quick tap switches without it flashing.
+    switcher-shows pictures
+    switcher-windows everywhere
+    switcher-delay 0.15
+    switcher-mascot on
+
+    # The hotkey cheat sheet at startup: first-time, always or never.
+    hotkey-overlay-at-startup first-time
 
     # MOTION
 

@@ -309,8 +309,14 @@ extension WindowManager {
     func pointerMoved() {
         guard !paused else { return }
         let p = NSEvent.mouseLocation
-        if config.hotCorner {
-            let corner = NSScreen.screens.contains { p.x <= $0.frame.minX + 1 && p.y >= $0.frame.maxY - 1 && $0.frame.contains(CGPoint(x: p.x, y: p.y - 1)) }
+        if let hot = config.hotCorner {
+            let left = hot == .topLeft || hot == .bottomLeft, top = hot == .topLeft || hot == .topRight
+            // The pointer stops a point short of a screen's right and top edges, so each side allows a point of slack.
+            let corner = NSScreen.screens.contains { s in
+                let f = s.frame
+                return (left ? p.x <= f.minX + 1 : p.x >= f.maxX - 2) && (top ? p.y >= f.maxY - 2 : p.y <= f.minY + 1)
+                    && f.insetBy(dx: -1, dy: -1).contains(p)
+            }
             if corner && !inCorner { run(.toggleOverview) }
             inCorner = corner
         }

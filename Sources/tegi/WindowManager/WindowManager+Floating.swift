@@ -145,16 +145,33 @@ extension WindowManager {
         var ids = recent.ordered(wins.values.filter { !$0.suspended }.map(\.id))
         if let current = focused, let i = ids.firstIndex(of: current) { ids.insert(ids.remove(at: i), at: 0) }
         if sameApp, let pid = focused.flatMap({ wins[$0] })?.worker.pid { ids = ids.filter { wins[$0]?.worker.pid == pid } }
+        if config.switcherWindows != .everywhere {
+            let monitor = world.focusedMonitor
+            let workspace = world.monitors.indices.contains(monitor) ? world.monitors[monitor].active : nil
+            ids = ids.filter { id in
+                guard let place = self.place(id) else { return false }
+                return place.monitor == monitor && (config.switcherWindows == .display || place.workspace == workspace)
+            }
+        }
+        let icons = config.switcherShows == .icons
         let items = ids.compactMap { id -> RecentWindows.Item? in
             guard let win = wins[id] else { return nil }
             let size = applied[id]?.size ?? win.floatFrame?.size ?? CGSize(width: 800, height: 600)
-            return RecentWindows.Item(id: id, title: win.title, app: win.worker.name, image: snapshots.images[id], icon: win.worker.icon, size: size)
+            return RecentWindows.Item(id: id, title: win.title, app: win.worker.name, image: icons ? nil : snapshots.images[id],
+                                      icon: win.worker.icon, size: size)
         }
-        recent.open(items, forward: forward, ring: config.focusRingColor)
+        recent.open(items, forward: forward, config: config)
+        guard !icons else { return }
         let list = ids.compactMap { id in wins[id].map { (id: id, windowID: $0.windowID) } }
         snapshots.refresh(list, scale: NSScreen.main?.backingScaleFactor ?? 2) { [weak self] id in
             guard let self, let image = snapshots.images[id] else { return }
             recent.setImage(image, for: id)
         }
+    }
+
+    /// The display and workspace a window lives on, floating ones on their home workspace.
+    private func place(_ id: WindowID) -> (monitor: Int, workspace: Int)? {
+        if let home = wins[id]?.floatHome, wins[id]?.floating == true { return world.find(workspace: home).map { ($0.monitor, $0.index) } }
+        return world.locate(id).map { ($0.monitor, $0.workspace) }
     }
 }

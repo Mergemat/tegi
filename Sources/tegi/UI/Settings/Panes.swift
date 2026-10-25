@@ -353,16 +353,6 @@ struct LooksPane: View {
             }
         }
 
-        CardTitle("Overview")
-        Card {
-            OverviewScene(zoom: c.overviewZoom, backdrop: SwiftUI.Color(c.backdropColor))
-                .animation(.spring(duration: 0.35, bounce: 0.2), value: c.overviewZoom)
-                .frame(maxWidth: .infinity)
-                .padding(.top, Space.card)
-            SliderRow(title: "Zoom", detail: "How small workspaces get.", key: ["overview-zoom"], value: c.overviewZoom,
-                      range: 0.25...0.75, step: 0.05, format: percent, live: { $0.overviewZoom = $1 })
-            ColorRow(title: "Backdrop", key: ["backdrop-color"], color: c.backdropColor, last: true) { $0.backdropColor = $1 }
-        }
     }
 }
 
@@ -656,8 +646,6 @@ struct GesturesPane: View {
 
         CardTitle("Pointer")
         Card {
-            ToggleRow(title: "Hot corner", detail: "Push the pointer into the top-left corner to open the overview.",
-                      key: ["hot-corner"], isOn: c.hotCorner, on: ["on"], off: ["off"])
             ToggleRow(title: "Focus follows the pointer", key: ["focus-follows-mouse"], isOn: c.focusFollowsMouse != nil)
             if let follow = c.focusFollowsMouse {
                 SliderRow(title: "…and may scroll the strip", detail: "To reach a window that's partly off screen.", key: ["focus-follows-mouse"],

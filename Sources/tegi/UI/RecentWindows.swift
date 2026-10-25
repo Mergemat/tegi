@@ -15,7 +15,7 @@ final class RecentWindows {
     var onCommit: (WindowID) -> Void = { _ in }
     private var order: [WindowID] = []
     private var pending: DispatchWorkItem?
-    private var session: (items: [Item], selected: Int, modifiers: NSEvent.ModifierFlags, ring: TegiCore.Color)?
+    private var session: (items: [Item], selected: Int, modifiers: NSEvent.ModifierFlags, config: Config)?
     private var panel: SwitcherPanel?
     private var monitors: [Any] = []
 
@@ -44,7 +44,7 @@ final class RecentWindows {
         order.first { $0 != current && ids.contains($0) }
     }
 
-    func open(_ items: [Item], forward: Bool, ring: TegiCore.Color) {
+    func open(_ items: [Item], forward: Bool, config: Config) {
         guard items.count > 1 else { return }
         let held = NSEvent.modifierFlags.intersection([.option, .command, .control, .shift])
         guard !held.isEmpty else {
@@ -52,7 +52,7 @@ final class RecentWindows {
             commit(id)
             return onCommit(id)
         }
-        session = (items, forward ? 1 : items.count - 1, held, ring)
+        session = (items, forward ? 1 : items.count - 1, held, config)
         let flags = NSEvent.addGlobalMonitorForEvents(matching: .flagsChanged) { [weak self] _ in self?.modifiersChanged() }
         let local = NSEvent.addLocalMonitorForEvents(matching: [.flagsChanged, .keyDown]) { [weak self] e in
             guard let self else { return e }
@@ -60,9 +60,9 @@ final class RecentWindows {
             return nil
         }
         monitors = [flags, local].compactMap { $0 }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + config.switcherDelay) { [weak self] in
             guard let self, let s = session else { return }
-            let panel = SwitcherPanel(ring: s.ring)
+            let panel = SwitcherPanel(config: s.config)
             panel.show(s.items, selected: s.selected)
             self.panel = panel
         }
@@ -128,8 +128,8 @@ final class RecentWindows {
 private final class SwitcherPanel: NSPanel {
     private let model: SwitcherModel
 
-    init(ring: TegiCore.Color) {
-        model = SwitcherModel(ring: SwiftUI.Color(ring))
+    init(config: Config) {
+        model = SwitcherModel(ring: SwiftUI.Color(config.focusRingColor), mascot: config.switcherMascot, icons: config.switcherShows == .icons)
         super.init(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         isOpaque = false
         backgroundColor = .clear
@@ -145,6 +145,7 @@ private final class SwitcherPanel: NSPanel {
         let visible = screen.visibleFrame
         let maxHeight = min(420, visible.height * 0.45)
         var sizes = items.map { item -> CGSize in
+            if model.icons { return CGSize(width: 84, height: 84) }
             let scale = min(0.5, maxHeight / max(item.size.height, 1))
             return CGSize(width: item.size.width * scale, height: item.size.height * scale)
         }
@@ -152,7 +153,7 @@ private final class SwitcherPanel: NSPanel {
         let fit = min(1, (visible.width * 0.92 - chrome) / max(sizes.reduce(0) { $0 + $1.width }, 1))
         sizes = sizes.map { CGSize(width: ($0.width * fit).rounded(), height: ($0.height * fit).rounded()) }
         let width = sizes.reduce(0) { $0 + $1.width } + chrome
-        let height = (sizes.map(\.height).max() ?? 0) + SwitcherView.pad * 2 + SwitcherView.label + SwitcherView.peek
+        let height = (sizes.map(\.height).max() ?? 0) + SwitcherView.pad * 2 + SwitcherView.label + (model.mascot ? SwitcherView.peek : 0)
         setFrame(CGRect(x: (visible.midX - width / 2).rounded(), y: (visible.midY - height / 2).rounded(), width: width, height: height), display: false)
         let first = model.items.isEmpty
         model.items = items
@@ -168,11 +169,17 @@ private final class SwitcherPanel: NSPanel {
 
 private final class SwitcherModel: ObservableObject {
     let ring: SwiftUI.Color
+    let mascot: Bool
+    let icons: Bool
     @Published var items: [RecentWindows.Item] = []
     @Published var sizes: [CGSize] = []
     @Published var selected = 0
 
-    init(ring: SwiftUI.Color) { self.ring = ring }
+    init(ring: SwiftUI.Color, mascot: Bool, icons: Bool) {
+        self.ring = ring
+        self.mascot = mascot
+        self.icons = icons
+    }
 }
 
 /// The recent windows on a plain frosted strip: the picked one wears the focus ring, with the mascot peeking over it.
@@ -182,7 +189,7 @@ private struct SwitcherView: View {
 
     var body: some View {
         ZStack(alignment: .topLeading) {
-            Mascot(ringWidth: 0, radius: 7).frame(width: 28, height: 32).offset(x: mascotX - 14, y: 0)
+            if model.mascot { Mascot(ringWidth: 0, radius: 7).frame(width: 28, height: 32).offset(x: mascotX - 14, y: 0) }
             VStack(spacing: 8) {
                 HStack(spacing: Self.spacing) {
                     ForEach(Array(model.items.enumerated()), id: \.element.id) { i, item in
@@ -200,7 +207,7 @@ private struct SwitcherView: View {
             }
             .padding(Self.pad)
             .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
-            .padding(.top, Self.peek)
+            .padding(.top, model.mascot ? Self.peek : 0)
         }
     }
 
@@ -218,7 +225,9 @@ private struct SwitcherView: View {
             } else {
                 ZStack {
                     SwiftUI.Color.primary.opacity(0.06)
-                    if let icon = item.icon { Image(nsImage: icon).resizable().frame(width: 48, height: 48) }
+                    if let icon = item.icon {
+                        Image(nsImage: icon).resizable().frame(width: model.icons ? 64 : 48, height: model.icons ? 64 : 48)
+                    }
                 }
             }
         }

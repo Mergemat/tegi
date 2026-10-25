@@ -49,7 +49,7 @@ func chrome(_ window: NSWindow) {
 }
 
 enum Pane: String, CaseIterable, Identifiable {
-    case layout, workspaces, looks, motion, gestures, hotkeys, apps, about
+    case layout, workspaces, apps, looks, overlays, motion, hotkeys, gestures, about
     var id: Self { self }
 
     var title: String {
@@ -57,6 +57,7 @@ enum Pane: String, CaseIterable, Identifiable {
         case .layout: "Layout"
         case .workspaces: "Workspaces"
         case .looks: "Looks"
+        case .overlays: "Overlays"
         case .motion: "Motion"
         case .gestures: "Gestures"
         case .hotkeys: "Hotkeys"
@@ -69,7 +70,8 @@ enum Pane: String, CaseIterable, Identifiable {
         switch self {
         case .layout: "How windows sit on the strip."
         case .workspaces: "The stack of workspaces on each display."
-        case .looks: "The focus ring, corners and the overview."
+        case .looks: "The focus ring and window corners."
+        case .overlays: "Everything tegi draws on top of your windows."
         case .motion: "Every animation is a spring. Make it yours."
         case .gestures: "Swipes, the modifier and the pointer."
         case .hotkeys: "One key for tegi, and Shift takes the window along."
@@ -83,6 +85,7 @@ enum Pane: String, CaseIterable, Identifiable {
         case .layout: "rectangle.split.3x1.fill"
         case .workspaces: "square.stack.3d.up.fill"
         case .looks: "paintbrush.pointed.fill"
+        case .overlays: "rectangle.stack.fill"
         case .motion: "wand.and.stars"
         case .gestures: "hand.draw.fill"
         case .hotkeys: "command"
@@ -91,11 +94,22 @@ enum Pane: String, CaseIterable, Identifiable {
         }
     }
 
+    /// The rail's heading this section sits under; About sits apart, under none.
+    var group: String? {
+        switch self {
+        case .layout, .workspaces, .apps: "Windows"
+        case .looks, .overlays, .motion: "Look & feel"
+        case .hotkeys, .gestures: "Controls"
+        case .about: nil
+        }
+    }
+
     var tint: SwiftUI.Color {
         switch self {
         case .layout: SwiftUI.Color(hex: 0x5aa8ff)
         case .workspaces: SwiftUI.Color(hex: 0x9b7bff)
         case .looks: SwiftUI.Color(hex: 0xff7aa8)
+        case .overlays: SwiftUI.Color(hex: 0xf5b83d)
         case .motion: SwiftUI.Color(hex: 0xffa94d)
         case .gestures: SwiftUI.Color(hex: 0x3fcf8e)
         case .hotkeys: SwiftUI.Color(hex: 0x8a90a8)
@@ -135,6 +149,16 @@ struct SettingsView: View {
     private var rail: some View {
         VStack(spacing: 3) {
             ForEach(Pane.allCases) { p in
+                if let i = Pane.allCases.firstIndex(of: p), i == 0 || Pane.allCases[i - 1].group != p.group {
+                    Text(p.group?.uppercased() ?? " ")
+                        .font(.system(size: 10.5, weight: .bold, design: .rounded))
+                        .tracking(0.4)
+                        .foregroundStyle(Theme(scheme).faint)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.leading, 9)
+                        .padding(.top, i == 0 ? 2 : 12)
+                        .padding(.bottom, 2)
+                }
                 RailItem(pane: p, selected: p == pane) {
                     guard p != pane else { return }
                     forward = (Pane.allCases.firstIndex(of: p) ?? 0) > (Pane.allCases.firstIndex(of: pane) ?? 0)
@@ -190,6 +214,7 @@ struct SettingsView: View {
         case .layout: LayoutPane()
         case .workspaces: WorkspacesPane()
         case .looks: LooksPane()
+        case .overlays: OverlaysPane()
         case .motion: MotionPane()
         case .gestures: GesturesPane()
         case .hotkeys: HotkeysPane()
