@@ -97,49 +97,103 @@ struct LayoutPane: View {
         CardTitle("Screen edges")
         Card {
             Row(title: "Keep clear", detail: "Room for a dock or a bar, in points.", stacked: true, last: true) {
-                let s = [c.struts.left, c.struts.right, c.struts.top, c.struts.bottom]
-                HStack(spacing: 10) {
-                    ForEach(Array(["Left", "Right", "Top", "Bottom"].enumerated()), id: \.offset) { i, side in
-                        PointsField(side: side, value: s[i]) { v in
-                            var next = s
-                            next[i] = v
-                            model.set(["struts"], next.map(number))
-                        }
-                    }
-                }
+                EdgesScene(struts: c.struts) { model.set(["struts"], [$0.left, $0.right, $0.top, $0.bottom].map(number)) }
+                    .frame(maxWidth: .infinity)
             }
         }
     }
 }
 
+/// The main display in miniature, true to its proportions: the bands kept clear along each edge, and the windows in what's left.
+struct EdgesScene: View {
+    let struts: Struts
+    let commit: (Struts) -> Void
+
+    var body: some View {
+        VStack(spacing: 8) {
+            field(\.top, "Top")
+            HStack(spacing: 10) {
+                field(\.left, "Left")
+                screen
+                field(\.right, "Right")
+            }
+            field(\.bottom, "Bottom")
+        }
+    }
+
+    private func field(_ side: WritableKeyPath<Struts, Double>, _ name: String) -> some View {
+        PointsField(value: struts[keyPath: side]) { v in
+            var next = struts
+            next[keyPath: side] = v
+            commit(next)
+        }
+        .help(name)
+    }
+
+    private var screen: some View {
+        let display = NSScreen.main ?? NSScreen.screens[0]
+        let frame = display.frame, visible = display.visibleFrame
+        let width = 280.0, k = width / frame.width
+        // Struts are measured from the area the menu bar and Dock leave, as tegi applies them.
+        let usable = CGRect(x: (visible.minX - frame.minX) * k, y: (frame.maxY - visible.maxY) * k,
+                            width: visible.width * k, height: visible.height * k)
+        let area = CGRect(x: usable.minX + struts.left * k, y: usable.minY + struts.top * k,
+                          width: max(24, usable.width - (struts.left + struts.right) * k),
+                          height: max(24, usable.height - (struts.top + struts.bottom) * k))
+        return ZStack(alignment: .topLeading) {
+            LinearGradient(colors: [SwiftUI.Color(hex: 0x5b7cff), SwiftUI.Color(hex: 0xb18cff)], startPoint: .topLeading, endPoint: .bottomTrailing)
+            Rectangle().fill(.white.opacity(0.5)).frame(width: width, height: usable.minY)
+            Path { p in
+                p.addRect(usable)
+                p.addRect(area)
+            }
+            .fill(.white.opacity(0.4), style: FillStyle(eoFill: true))
+            if area != usable {
+                RoundedRectangle(cornerRadius: 3).strokeBorder(.white, style: StrokeStyle(lineWidth: 1, dash: [3, 2]))
+                    .frame(width: area.width, height: area.height)
+                    .offset(x: area.minX, y: area.minY)
+            }
+            HStack(spacing: 5) {
+                Friend(radius: 5)
+                Mascot(ringWidth: 2, radius: 5)
+                Friend(radius: 5)
+            }
+            .padding(7)
+            .frame(width: area.width, height: area.height)
+            .offset(x: area.minX, y: area.minY)
+        }
+        .frame(width: width, height: frame.height * k)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(.white.opacity(0.15)))
+        .shadow(color: .black.opacity(0.25), radius: 8, y: 3)
+        .animation(.spring(duration: 0.35, bounce: 0.2), value: struts)
+    }
+}
+
 struct PointsField: View {
     @Environment(\.colorScheme) private var scheme
-    let side: String
     let value: Double
     let commit: (Double) -> Void
     @State private var text = ""
 
     var body: some View {
         let t = Theme(scheme)
-        VStack(spacing: 5) {
-            HStack(spacing: 3) {
-                TextField("", text: $text)
-                    .textFieldStyle(.plain)
-                    .multilineTextAlignment(.trailing)
-                    .font(.system(size: 12.5, weight: .semibold, design: .rounded).monospacedDigit())
-                    .foregroundStyle(t.text)
-                    .onAppear { text = number(value) }
-                    .onChange(of: value) { text = number(value) }
-                    .onSubmit {
-                        if let v = Double(text), (0...2000).contains(v) { commit(v) } else { text = number(value) }
-                    }
-                Text("pt").font(.system(size: 11, design: .rounded)).foregroundStyle(t.faint)
-            }
-            .padding(.horizontal, 12).padding(.vertical, 6)
-            .frame(width: 84)
-            .background(t.chip, in: Capsule())
-            Text(side).font(.system(size: 10.5, weight: .semibold, design: .rounded)).foregroundStyle(t.secondary)
+        HStack(spacing: 3) {
+            TextField("", text: $text)
+                .textFieldStyle(.plain)
+                .multilineTextAlignment(.trailing)
+                .font(.system(size: 12.5, weight: .semibold, design: .rounded).monospacedDigit())
+                .foregroundStyle(t.text)
+                .onAppear { text = number(value) }
+                .onChange(of: value) { text = number(value) }
+                .onSubmit {
+                    if let v = Double(text), (0...2000).contains(v) { commit(v) } else { text = number(value) }
+                }
+            Text("pt").font(.system(size: 11, design: .rounded)).foregroundStyle(t.faint)
         }
+        .padding(.horizontal, 12).padding(.vertical, 6)
+        .frame(width: 76)
+        .background(t.chip, in: Capsule())
     }
 }
 
