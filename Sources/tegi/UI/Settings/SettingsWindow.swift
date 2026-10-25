@@ -19,15 +19,15 @@ final class SettingsWindow {
     }
 
     private func make() -> NSWindow {
-        let hosting = NSHostingController(rootView: SettingsView(model: model))
-        hosting.sceneBridgingOptions = [.title, .toolbars]
-        let window = NSWindow(contentViewController: hosting)
+        let window = NSWindow(contentViewController: NSHostingController(rootView: SettingsView(model: model)))
         window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
-        window.toolbar = NSToolbar(identifier: "tegi.settings")
-        window.toolbarStyle = .unified
+        window.titlebarAppearsTransparent = true
+        window.titleVisibility = .hidden
+        window.title = "tegi Settings"
+        window.isMovableByWindowBackground = true
         window.isReleasedWhenClosed = false
-        window.setContentSize(CGSize(width: 780, height: 640))
-        window.minSize = CGSize(width: 680, height: 480)
+        window.setContentSize(CGSize(width: 820, height: 660))
+        window.minSize = CGSize(width: 720, height: 560)
         window.center()
         window.setFrameAutosaveName("tegi.settings")
         return window
@@ -38,151 +38,224 @@ enum Pane: String, CaseIterable, Identifiable {
     case layout, workspaces, looks, motion, gestures, hotkeys, apps, about
     var id: Self { self }
 
-    static let groups: [[Pane]] = [[.layout, .workspaces], [.looks, .motion], [.gestures, .hotkeys], [.apps]]
-
     var title: String {
         switch self {
         case .layout: "Layout"
         case .workspaces: "Workspaces"
         case .looks: "Looks"
         case .motion: "Motion"
-        case .gestures: "Gestures & Mouse"
+        case .gestures: "Gestures"
         case .hotkeys: "Hotkeys"
         case .apps: "Apps"
-        case .about: "About tegi"
+        case .about: "About"
         }
     }
 
-    /// Words a search in the sidebar finds this pane by.
-    var keywords: String {
+    var subtitle: String {
         switch self {
-        case .layout: "gap column width presets height center struts edges tabs stacked"
-        case .workspaces: "workspace named back forth empty display"
-        case .looks: "focus ring color border corner radius overview zoom backdrop"
-        case .motion: "animation spring speed bounce stiffness slow fast"
-        case .gestures: "trackpad swipe fingers modifier option hot corner pointer mouse focus follows"
-        case .hotkeys: "keys shortcuts bindings keyboard"
-        case .apps: "rules float window app startup launch"
-        case .about: "version config file github permissions"
-        }
-    }
-
-    var symbol: String {
-        switch self {
-        case .layout: "rectangle.split.3x1.fill"
-        case .workspaces: "square.stack.3d.up.fill"
-        case .looks: "paintbrush.pointed.fill"
-        case .motion: "wand.and.stars"
-        case .gestures: "hand.draw.fill"
-        case .hotkeys: "command"
-        case .apps: "app.badge.fill"
-        case .about: "heart.fill"
+        case .layout: "How windows sit on the strip."
+        case .workspaces: "The stack of workspaces on each display."
+        case .looks: "The focus ring, corners and the overview."
+        case .motion: "Every animation is a spring. Make it yours."
+        case .gestures: "Swipes, the modifier and the pointer."
+        case .hotkeys: "Every shortcut, grouped by what it does."
+        case .apps: "Where apps open, and what starts with tegi."
+        case .about: "Hello!"
         }
     }
 
     var tint: SwiftUI.Color {
         switch self {
-        case .layout: SwiftUI.Color(red: 0.24, green: 0.55, blue: 0.98)
-        case .workspaces: SwiftUI.Color(red: 0.55, green: 0.4, blue: 0.95)
-        case .looks: SwiftUI.Color(red: 0.97, green: 0.35, blue: 0.6)
-        case .motion: SwiftUI.Color(red: 1, green: 0.56, blue: 0.16)
-        case .gestures: SwiftUI.Color(red: 0.18, green: 0.72, blue: 0.46)
-        case .hotkeys: SwiftUI.Color(red: 0.43, green: 0.45, blue: 0.53)
-        case .apps: SwiftUI.Color(red: 0.12, green: 0.68, blue: 0.82)
-        case .about: SwiftUI.Color(red: 1, green: 0.33, blue: 0.4)
+        case .layout: SwiftUI.Color(hex: 0x5aa8ff)
+        case .workspaces: SwiftUI.Color(hex: 0x9b7bff)
+        case .looks: SwiftUI.Color(hex: 0xff7aa8)
+        case .motion: SwiftUI.Color(hex: 0xffa94d)
+        case .gestures: SwiftUI.Color(hex: 0x3fcf8e)
+        case .hotkeys: SwiftUI.Color(hex: 0x8a90a8)
+        case .apps: SwiftUI.Color(hex: 0x2fc4d8)
+        case .about: SwiftUI.Color(hex: 0xff6b81)
         }
     }
 }
-
-let tegiBlue = SwiftUI.Color(red: 0.5, green: 0.78, blue: 1)
-var tegiIcon: NSImage { NSImage(named: "AppIcon") ?? NSApp.applicationIconImage }
 
 struct SettingsView: View {
     @ObservedObject var model: SettingsModel
-    @AppStorage("settings.pane") private var stored: Pane = .layout
-    @State private var search = ""
-
-    private var matches: [[Pane]] {
-        let q = search.lowercased().trimmingCharacters(in: .whitespaces)
-        guard !q.isEmpty else { return Pane.groups }
-        return Pane.groups.map { $0.filter { ($0.title + " " + $0.keywords).lowercased().contains(q) } }.filter { !$0.isEmpty }
-    }
+    @Environment(\.colorScheme) private var scheme
+    @AppStorage("settings.pane") private var pane: Pane = .layout
+    @State private var forward = true
 
     var body: some View {
-        NavigationSplitView {
-            List(selection: Binding(get: { stored }, set: { if let p = $0 { stored = p } })) {
-                Section {
-                    HStack(spacing: 10) {
-                        Mascot(ringWidth: 2, radius: 6)
-                            .frame(width: 26, height: 32)
-                            .padding(5)
-                            .background(Circle().fill(LinearGradient(colors: [SwiftUI.Color(red: 0.3, green: 0.34, blue: 0.75), SwiftUI.Color(red: 0.14, green: 0.16, blue: 0.42)],
-                                                                     startPoint: .top, endPoint: .bottom)))
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text("tegi").font(.system(size: 13, weight: .semibold))
-                            Text("Version \(version)").font(.system(size: 11)).foregroundStyle(.secondary)
-                        }
-                    }
-                    .padding(.vertical, 2)
-                    .tag(Pane.about)
-                }
-                ForEach(Array(matches.enumerated()), id: \.offset) { _, group in
-                    Section {
-                        ForEach(group) { p in
-                            Label { Text(p.title) } icon: { Tile(symbol: p.symbol, tint: p.tint) }
-                                .tag(p)
-                        }
-                    }
-                }
+        let t = Theme(scheme)
+        HStack(alignment: .top, spacing: 18) {
+            rail
+            page(t)
+        }
+        .padding(.top, 44)
+        .padding(.leading, 14)
+        .padding([.trailing, .bottom], 22)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background {
+            ZStack {
+                t.background
+                if t.night { Stars() }
             }
-            .searchable(text: $search, placement: .sidebar, prompt: "Search")
-            .navigationSplitViewColumnWidth(min: 200, ideal: 220, max: 280)
-        } detail: {
-            detail.navigationTitle(stored.title)
+            .ignoresSafeArea()
         }
         .environmentObject(model)
-        .tint(SwiftUI.Color(red: 0.3, green: 0.6, blue: 1))
+        .tint(SwiftUI.Color(hex: 0x4f9dff))
     }
 
-    @ViewBuilder private var detail: some View {
-        VStack(spacing: 0) {
-            if let problem = model.problem {
-                Label("Your config has a problem — \(problem). Changes here won't save until it's fixed.", systemImage: "exclamationmark.triangle.fill")
-                    .font(.callout)
-                    .padding(10)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(.orange.opacity(0.15))
+    // Sections are workspaces: the one you're on shows the mascot in its middle column.
+    private var rail: some View {
+        VStack(spacing: 9) {
+            ForEach(Pane.allCases) { p in
+                RailItem(pane: p, selected: p == pane) {
+                    guard p != pane else { return }
+                    forward = (Pane.allCases.firstIndex(of: p) ?? 0) > (Pane.allCases.firstIndex(of: pane) ?? 0)
+                    withAnimation(.spring(duration: 0.45, bounce: 0.15)) { pane = p }
+                }
             }
-            switch stored {
-            case .layout: LayoutPane()
-            case .workspaces: WorkspacesPane()
-            case .looks: LooksPane()
-            case .motion: MotionPane()
-            case .gestures: GesturesPane()
-            case .hotkeys: HotkeysPane()
-            case .apps: AppsPane()
-            case .about: AboutPane()
+            Spacer(minLength: 0)
+        }
+        .frame(width: 124)
+    }
+
+    private func page(_ t: Theme) -> some View {
+        ZStack(alignment: .topTrailing) {
+            ZStack {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 0) {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(pane.title).font(.system(size: 24, weight: .bold, design: .rounded)).foregroundStyle(t.text)
+                            Text(pane.subtitle).font(.system(size: 12.5, design: .rounded)).foregroundStyle(t.secondary)
+                        }
+                        .padding(.horizontal, Space.page)
+                        .padding(.top, Space.page)
+                        .padding(.bottom, 18)
+                        if let problem = model.problem {
+                            Label("Your config has a problem — \(problem). Changes won't save until it's fixed.", systemImage: "exclamationmark.triangle.fill")
+                                .font(.system(size: 12, design: .rounded))
+                                .foregroundStyle(.orange)
+                                .padding(12)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                                .padding(.horizontal, 16)
+                                .padding(.bottom, Space.between)
+                        }
+                        content
+                        Footer()
+                    }
+                }
+                .scrollIndicators(.hidden)
+                .id(pane)
+                .transition(.asymmetric(insertion: .move(edge: forward ? .bottom : .top).combined(with: .opacity),
+                                        removal: .move(edge: forward ? .top : .bottom).combined(with: .opacity)))
             }
+            .background(t.page, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 26, style: .continuous).strokeBorder(tegiBlue, lineWidth: 4).padding(-4))
+            .shadow(color: tegiBlue.opacity(t.night ? 0.45 : 0.55), radius: 14)
+            Peek(night: t.night, saves: model.saves)
+                .frame(width: 44, height: 54)
+                .offset(x: -30, y: -32)
+        }
+    }
+
+    @ViewBuilder private var content: some View {
+        switch pane {
+        case .layout: LayoutPane()
+        case .workspaces: WorkspacesPane()
+        case .looks: LooksPane()
+        case .motion: MotionPane()
+        case .gestures: GesturesPane()
+        case .hotkeys: HotkeysPane()
+        case .apps: AppsPane()
+        case .about: AboutPane()
         }
     }
 }
 
-/// System Settings' colored icon tiles.
-struct Tile: View {
-    let symbol: String
-    let tint: SwiftUI.Color
-    var size: CGFloat = 20
+struct RailItem: View {
+    @Environment(\.colorScheme) private var scheme
+    let pane: Pane
+    let selected: Bool
+    let tap: () -> Void
 
     var body: some View {
-        Image(systemName: symbol)
-            .font(.system(size: size * 0.52, weight: .semibold))
-            .foregroundStyle(.white)
-            .frame(width: size, height: size)
-            .background(tint.gradient, in: RoundedRectangle(cornerRadius: size * 0.3, style: .continuous))
+        let t = Theme(scheme)
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 3) {
+                if selected {
+                    Friend(radius: 5, face: false).opacity(0.85)
+                    Mascot(ringWidth: 1.5, radius: 5)
+                    Friend(radius: 5, face: false).opacity(0.85)
+                } else {
+                    ForEach(0..<3, id: \.self) { i in
+                        RoundedRectangle(cornerRadius: 5, style: .continuous).fill(pane.tint.opacity(i == 1 ? 0.55 : 0.35))
+                    }
+                }
+            }
+            .frame(height: 24)
+            HStack(spacing: 5) {
+                RoundedRectangle(cornerRadius: 2.5, style: .continuous).fill(pane.tint).frame(width: 8, height: 8)
+                Text(pane.title).font(.system(size: 10.5, weight: .bold, design: .rounded))
+                    .foregroundStyle(selected ? t.text : t.railText)
+            }
+            .padding(.leading, 2)
+        }
+        .padding(7)
+        .background(selected ? (t.night ? tegiBlue.opacity(0.16) : .white) : t.rail, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
+            .strokeBorder(selected ? tegiBlue.opacity(t.night ? 0.7 : 1) : .white.opacity(t.night ? 0 : 0.9), lineWidth: selected ? 2 : 1))
+        .shadow(color: selected ? SwiftUI.Color(hex: 0x4f9dff, opacity: t.night ? 0 : 0.25) : .clear, radius: 8, y: 3)
+        .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .onTapGesture(perform: tap)
     }
 }
 
-/// A slider with its end labels under the track, saved when let go.
+/// The mascot peeking over the page: asleep at night, and it perks up whenever a change is saved.
+struct Peek: View {
+    let night: Bool
+    let saves: Int
+    @State private var hop = false
+
+    var body: some View {
+        Mascot(ringWidth: 0, radius: 11, asleep: night && !hop)
+            .scaleEffect(hop ? 1.12 : 1, anchor: .bottom)
+            .offset(y: hop ? -6 : 0)
+            .onChange(of: saves) {
+                withAnimation(.spring(duration: 0.3, bounce: 0.5)) { hop = true }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) {
+                    withAnimation(.spring(duration: 0.4)) { hop = false }
+                }
+            }
+            .allowsHitTesting(false)
+    }
+}
+
+struct Footer: View {
+    @EnvironmentObject var model: SettingsModel
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Spacer()
+            Button("Open config file") { NSWorkspace.shared.open(model.url) }
+                .buttonStyle(GummyButtonStyle())
+            Button { NSWorkspace.shared.open(URL(string: "https://github.com/Mergemat/tegi#readme")!) } label: {
+                Image(systemName: "questionmark").font(.system(size: 11, weight: .bold))
+            }
+            .buttonStyle(GummyButtonStyle())
+            .help("tegi's guide")
+        }
+        .padding(.horizontal, Space.page)
+        .padding(.top, 4)
+        .padding(.bottom, Space.page)
+    }
+}
+
+// MARK: Rows bound to settings
+
+/// A slider row: the previews follow while it's dragged, and the config is written when it's let go.
 struct SliderRow: View {
     @EnvironmentObject var model: SettingsModel
     let title: String
@@ -191,248 +264,40 @@ struct SliderRow: View {
     let value: Double
     let range: ClosedRange<Double>
     var step: Double = 1
-    var low: String?
-    var high: String?
-    var format: ((Double) -> String)?
+    var last = false
+    let format: (Double) -> String
+    let live: (inout Config, Double) -> Void
     var write: (Double) -> [String] = { [number($0)] }
     @State private var shown: Double?
 
     var body: some View {
-        LabeledContent {
-            VStack(spacing: 3) {
-                let binding = Binding(get: { shown ?? value }, set: { shown = ($0 / step).rounded() * step })
-                let done: (Bool) -> Void = { editing in
-                    if !editing, let shown {
-                        model.set(key, write(shown))
-                        self.shown = nil
-                    }
-                }
-                // Ticks only for a handful of steps; any more and they crowd the track.
-                if (range.upperBound - range.lowerBound) / step <= 12 {
-                    Slider(value: binding, in: range, step: step, onEditingChanged: done)
-                } else {
-                    Slider(value: binding, in: range, onEditingChanged: done)
-                }
-                if low != nil || high != nil || format != nil {
-                    HStack {
-                        Text(low ?? "")
-                        Spacer()
-                        if let format { Text(format(shown ?? value)).monospacedDigit().foregroundStyle(.primary) }
-                        Spacer()
-                        Text(high ?? "")
-                    }
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                }
+        Row(title: title, detail: detail, last: last) {
+            GummySlider(value: value, range: range, step: step) { v in
+                shown = v
+                model.preview { live(&$0, v) }
+            } commit: { v in
+                model.set(key, write(v))
+                model.endPreview()
+                shown = nil
             }
-            .frame(width: 240)
-        } label: {
-            Text(title)
-            if let detail { Text(detail) }
+            ValueChip(text: format(shown ?? value))
         }
     }
 }
 
-struct SettingToggle: View {
+struct ToggleRow: View {
     @EnvironmentObject var model: SettingsModel
     let title: String
     var detail: String?
     let key: [String]
     let isOn: Bool
+    var last = false
     var on: [String]? = []
     var off: [String]?
 
     var body: some View {
-        Toggle(isOn: Binding(get: { isOn }, set: { model.set(key, $0 ? on : off) })) {
-            Text(title)
-            if let detail { Text(detail) }
+        Row(title: title, detail: detail, last: last) {
+            GummyToggle(isOn: isOn) { model.set(key, $0 ? on : off) }
         }
-    }
-}
-
-struct SettingColor: View {
-    @EnvironmentObject var model: SettingsModel
-    let title: String
-    let key: [String]
-    let color: TegiCore.Color
-
-    var body: some View {
-        ColorPicker(title, selection: Binding(get: { SwiftUI.Color(color) }, set: { model.set(key, [$0.hex]) }), supportsOpacity: true)
-    }
-}
-
-/// A section title that keeps its weight and room right under the previews.
-struct Heading: View {
-    let text: String
-    init(_ text: String) { self.text = text }
-
-    var body: some View {
-        Text(text).font(.system(size: 13, weight: .semibold)).foregroundStyle(.primary).padding(.top, 12)
-    }
-}
-
-/// A section's footnote, left-aligned like System Settings'.
-struct Note: View {
-    let text: String
-    init(_ text: String) { self.text = text }
-
-    var body: some View { Text(text).multilineTextAlignment(.leading).frame(maxWidth: .infinity, alignment: .leading) }
-}
-
-/// The illustrated cards at the top of a pane, like the ones in System Settings.
-struct Previews<Content: View>: View {
-    var height: CGFloat = 150
-    @ViewBuilder var content: Content
-
-    var body: some View {
-        HStack(spacing: 12) { content }
-            .frame(height: height)
-            .listRowInsets(EdgeInsets())
-            .listRowBackground(SwiftUI.Color.clear)
-    }
-}
-
-struct PreviewCard<Content: View>: View {
-    var caption: String?
-    @ViewBuilder var content: Content
-
-    var body: some View {
-        VStack(spacing: 0) {
-            ZStack { content }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(
-                    ZStack {
-                        LinearGradient(colors: [SwiftUI.Color(red: 0.22, green: 0.25, blue: 0.56), SwiftUI.Color(red: 0.09, green: 0.1, blue: 0.25)],
-                                       startPoint: .top, endPoint: .bottom)
-                        Sparkles()
-                    })
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(.white.opacity(0.08)))
-            if let caption {
-                Text(caption).font(.system(size: 11)).foregroundStyle(.secondary).padding(.top, 5)
-            }
-        }
-    }
-}
-
-struct Sparkles: View {
-    var body: some View {
-        Canvas { ctx, size in
-            for (x, y, r) in [(0.12, 0.2, 1.4), (0.85, 0.15, 1.8), (0.7, 0.8, 1.2), (0.25, 0.75, 1.0), (0.5, 0.1, 1.1), (0.93, 0.6, 1.3), (0.05, 0.55, 0.9)] {
-                let rect = CGRect(x: x * size.width - r, y: y * size.height - r, width: r * 2, height: r * 2)
-                ctx.fill(Path(ellipseIn: rect), with: .color(.white.opacity(0.55)))
-            }
-        }
-        .allowsHitTesting(false)
-    }
-}
-
-/// The help button System Settings ends its panes with, next to a pane's actions.
-struct PaneFooter: View {
-    @EnvironmentObject var model: SettingsModel
-    var help: String = "https://github.com/Mergemat/tegi#readme"
-
-    var body: some View {
-        HStack {
-            Spacer()
-            Button("Open Config File…") { NSWorkspace.shared.open(model.url) }
-            Button { NSWorkspace.shared.open(URL(string: help)!) } label: { Image(systemName: "questionmark") }
-                .buttonBorderShape(.circle)
-                .help("tegi's guide")
-        }
-        .listRowInsets(EdgeInsets())
-        .listRowBackground(SwiftUI.Color.clear)
-    }
-}
-
-/// tegi's mascot: a gummy window with a face, wearing the focus ring.
-struct Mascot: View {
-    var ring: SwiftUI.Color = tegiBlue
-    var ringWidth: CGFloat = 4
-    var radius: CGFloat = 12
-    var asleep = false
-
-    var body: some View {
-        GeometryReader { geo in
-            let s = min(geo.size.width, geo.size.height)
-            let ink = SwiftUI.Color(red: 0.1, green: 0.11, blue: 0.2)
-            let blush = SwiftUI.Color(red: 1, green: 0.55, blue: 0.64).opacity(0.75)
-            ZStack {
-                RoundedRectangle(cornerRadius: radius, style: .continuous)
-                    .fill(LinearGradient(colors: [.white, SwiftUI.Color(red: 0.88, green: 0.9, blue: 0.97)], startPoint: .top, endPoint: .bottom))
-                ZStack {
-                    HStack(spacing: s * 0.26) { eye(s, ink); eye(s, ink) }
-                    HStack(spacing: s * 0.42) {
-                        Ellipse().fill(blush).frame(width: s * 0.12, height: s * 0.075)
-                        Ellipse().fill(blush).frame(width: s * 0.12, height: s * 0.075)
-                    }
-                    .offset(y: s * 0.085)
-                    Circle().trim(from: 0.12, to: 0.38)
-                        .stroke(ink, style: StrokeStyle(lineWidth: max(1.4, s * 0.034), lineCap: .round))
-                        .frame(width: s * 0.2, height: s * 0.2)
-                        .offset(y: -s * 0.025)
-                }
-                .offset(y: -geo.size.height * 0.16)
-            }
-            .shadow(color: .black.opacity(0.25), radius: s * 0.05, y: s * 0.03)
-            .overlay {
-                if ringWidth > 0 {
-                    RoundedRectangle(cornerRadius: radius + ringWidth, style: .continuous)
-                        .strokeBorder(LinearGradient(colors: [ring.opacity(0.75), ring], startPoint: .top, endPoint: .bottom), lineWidth: ringWidth)
-                        .padding(-ringWidth)
-                        .shadow(color: ring.opacity(0.6), radius: 5)
-                }
-            }
-        }
-    }
-
-    @ViewBuilder private func eye(_ s: CGFloat, _ ink: SwiftUI.Color) -> some View {
-        if asleep {
-            Circle().trim(from: 0.05, to: 0.45)
-                .stroke(ink, style: StrokeStyle(lineWidth: max(1.2, s * 0.03), lineCap: .round))
-                .frame(width: s * 0.11, height: s * 0.11)
-        } else {
-            Circle().fill(ink).frame(width: s * 0.1, height: s * 0.1)
-                .overlay(Circle().fill(.white).frame(width: s * 0.03, height: s * 0.03).offset(x: -s * 0.015, y: -s * 0.018))
-        }
-    }
-}
-
-/// A sleepy neighbour column.
-struct Friend: View {
-    var radius: CGFloat = 12
-    var face = true
-
-    var body: some View {
-        GeometryReader { geo in
-            let s = min(geo.size.width, geo.size.height)
-            let ink = SwiftUI.Color(red: 0.14, green: 0.15, blue: 0.32).opacity(0.75)
-            ZStack {
-                RoundedRectangle(cornerRadius: radius, style: .continuous)
-                    .fill(LinearGradient(colors: [SwiftUI.Color(red: 0.6, green: 0.64, blue: 0.95), SwiftUI.Color(red: 0.4, green: 0.43, blue: 0.75)],
-                                         startPoint: .top, endPoint: .bottom))
-                if face && s > 30 {
-                    HStack(spacing: s * 0.24) {
-                        ForEach(0..<2, id: \.self) { _ in
-                            Circle().trim(from: 0.05, to: 0.45)
-                                .stroke(ink, style: StrokeStyle(lineWidth: max(1, s * 0.03), lineCap: .round))
-                                .frame(width: s * 0.1, height: s * 0.1)
-                        }
-                    }
-                    .offset(y: -geo.size.height * 0.16)
-                }
-            }
-        }
-    }
-}
-
-extension SwiftUI.Color {
-    init(_ c: TegiCore.Color) { self.init(.sRGB, red: c.red, green: c.green, blue: c.blue, opacity: c.alpha) }
-
-    var hex: String {
-        let c = NSColor(self).usingColorSpace(.sRGB) ?? .black
-        let v = [c.redComponent, c.greenComponent, c.blueComponent].map { Int(($0 * 255).rounded()) }
-        let a = Int((c.alphaComponent * 255).rounded())
-        return String(format: "#%02x%02x%02x", v[0], v[1], v[2]) + (a == 255 ? "" : String(format: "%02x", a))
     }
 }

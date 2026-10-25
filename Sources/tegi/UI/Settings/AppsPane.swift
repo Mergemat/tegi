@@ -26,75 +26,78 @@ struct AppsPane: View {
     @State private var shell = ""
 
     var body: some View {
-        let rules = model.config.rules
-        let startup = model.config.startup
-        Form {
-            Section {} header: {
-                Previews(height: 130) {
-                    PreviewCard(caption: "Apps open just how you like") {
-                        ZStack {
-                            HStack(spacing: 8) {
-                                Friend(radius: 6).frame(width: 40, height: 60)
-                                Mascot(ringWidth: 2.5, radius: 7).frame(width: 48, height: 60)
-                                Friend(radius: 6).frame(width: 40, height: 60)
-                            }
-                            Image(systemName: "plus.forwardslash.minus")
-                                .font(.system(size: 13, weight: .bold))
-                                .foregroundStyle(SwiftUI.Color(red: 0.2, green: 0.22, blue: 0.4))
-                                .frame(width: 38, height: 30)
-                                .background(.white, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-                                .shadow(color: .black.opacity(0.35), radius: 6, y: 3)
-                                .offset(x: 56, y: -22)
-                        }
+        let rules = model.shown.rules
+        let startup = model.shown.startup
+        Hero(height: 108) {
+            ZStack {
+                HStack(spacing: 8) {
+                    Friend(radius: 7).frame(width: 40, height: 58)
+                    Mascot(ringWidth: 2.5, radius: 8).frame(width: 48, height: 58)
+                    Friend(radius: 7).frame(width: 40, height: 58)
+                }
+                Image(systemName: "plus.forwardslash.minus")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(ink)
+                    .frame(width: 36, height: 28)
+                    .background(.white, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                    .shadow(color: .black.opacity(0.3), radius: 6, y: 3)
+                    .offset(x: 58, y: -20)
+            }
+        }
+
+        CardTitle("Window rules")
+        if rules.isEmpty {
+            Card {
+                Row(title: "No rules yet", detail: "Make an app float, open on a workspace, or start at a set width.", last: true) { EmptyView() }
+            }
+        }
+        ForEach(Array(rules.enumerated()), id: \.offset) { i, rule in
+            RuleCard(rule: rule) { changed in
+                var list = rules
+                if let changed { list[i] = changed } else { list.remove(at: i) }
+                model.setList("rule", list.map(\.words))
+            }
+        }
+        HStack {
+            Button("Add a rule for an app…") {
+                guard let id = chooseApp() else { return }
+                var rule = WindowRule()
+                rule.app = id
+                rule.floating = true
+                model.setList("rule", (rules + [rule]).map(\.words))
+            }
+            .buttonStyle(GummyButtonStyle(prominent: true))
+            Spacer()
+        }
+        .padding(.horizontal, Space.page)
+        .padding(.bottom, 22)
+
+        CardTitle("Start with tegi")
+        Card {
+            ForEach(Array(startup.enumerated()), id: \.offset) { i, command in
+                Row(title: title(of: command)) {
+                    RemoveButton {
+                        var list = startup
+                        list.remove(at: i)
+                        write(list)
                     }
                 }
             }
-            ForEach(Array(rules.enumerated()), id: \.offset) { i, rule in
-                RuleSection(rule: rule) { changed in
-                    var list = rules
-                    if let changed { list[i] = changed } else { list.remove(at: i) }
-                    model.setList("rule", list.map(\.words))
-                }
-            }
-            Section {
-                Button("Add a Rule for an App…") {
-                    guard let id = chooseApp() else { return }
-                    var rule = WindowRule()
-                    rule.app = id
-                    rule.floating = true
-                    model.setList("rule", (rules + [rule]).map(\.words))
-                }
-            } header: {
-                if rules.isEmpty { Heading("Window rules") }
-            } footer: {
-                Note("Make an app float, open on a workspace, or start at a set width. Every matching rule applies, in order.")
-            }
-            Section {
-                ForEach(Array(startup.enumerated()), id: \.offset) { i, command in
-                    LabeledContent(title(of: command)) {
-                        Button {
-                            var list = startup
-                            list.remove(at: i)
-                            write(list)
-                        } label: { Image(systemName: "minus.circle.fill").foregroundStyle(.secondary) }
-                            .buttonStyle(.borderless)
-                    }
-                }
-                Button("Add an App…") {
+            Row(title: "An app") {
+                Button("Choose…") {
                     guard let id = chooseApp() else { return }
                     write(startup + [.spawn(["open", "-b", id])])
                 }
-                HStack {
-                    TextField("Command", text: $shell, prompt: Text("Or a shell command, like brew services start sketchybar"))
-                        .onSubmit(addShell)
-                    Button("Add", action: addShell).disabled(shell.trimmingCharacters(in: .whitespaces).isEmpty)
-                }
-            } header: {
-                Heading("Start with tegi")
+                .buttonStyle(GummyButtonStyle())
             }
-            Section {} footer: { PaneFooter() }
+            Row(title: "Or a command", stacked: true, last: true) {
+                HStack {
+                    GummyField(prompt: "brew services start sketchybar", text: $shell, submit: addShell)
+                    Button("Add", action: addShell).buttonStyle(GummyButtonStyle(prominent: true))
+                        .disabled(shell.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+            }
         }
-        .formStyle(.grouped)
     }
 
     private func addShell() {
@@ -110,45 +113,65 @@ struct AppsPane: View {
     }
 }
 
-struct RuleSection: View {
+struct RuleCard: View {
     @EnvironmentObject var model: SettingsModel
+    @Environment(\.colorScheme) private var scheme
     let rule: WindowRule
     let change: (WindowRule?) -> Void
     @State private var titleText = ""
 
     var body: some View {
-        Section {
-            choice("Opens", rule.floating, [("As It Likes", nil), ("Tiled", false), ("Floating", true)]) { $0.floating = $1 }
-            choice("Width", rule.width, [("Default", nil), ("33%", 1.0 / 3), ("50%", 0.5), ("67%", 2.0 / 3), ("Full", 1)]) { $0.width = $1 }
-            choice("Focus", rule.focused, [("Takes It", nil), ("Stays Behind", false)]) { $0.focused = $1 }
-            choice("Workspace", rule.workspace, [("Current", nil)] + model.config.workspaces.map { ($0.name, $0.name) }) { $0.workspace = $1 }
-            LabeledContent("Only windows titled") {
-                TextField("", text: $titleText, prompt: Text("Any title"))
-                    .multilineTextAlignment(.trailing)
-                    .onAppear { titleText = rule.title ?? "" }
-                    .onSubmit {
+        let t = Theme(scheme)
+        Card {
+            HStack(spacing: 10) {
+                Image(nsImage: appIcon(rule.app == "*" ? nil : rule.app)).resizable().frame(width: 28, height: 28)
+                Text(rule.app == nil || rule.app == "*" ? "Any app" : appName(rule.app!))
+                    .font(.system(size: 14, weight: .bold, design: .rounded)).foregroundStyle(t.text)
+                Spacer()
+                RemoveButton { change(nil) }
+            }
+            .padding(.horizontal, Space.card)
+            .padding(.vertical, 10)
+            Rectangle().fill(t.divider).frame(height: 1).padding(.leading, Space.card)
+            Row(title: "Opens", stacked: true) {
+                Choice(options: [("As it likes", nil), ("Tiled", false), ("Floating", true)] as [(String, Bool?)], selected: rule.floating) { v in
+                    var r = rule
+                    r.floating = v
+                    change(r)
+                }
+            }
+            Row(title: "Width", stacked: true) {
+                Choice(options: [("Default", nil), ("33%", 1.0 / 3), ("50%", 0.5), ("67%", 2.0 / 3), ("Full", 1)] as [(String, Double?)], selected: rule.width) { v in
+                    var r = rule
+                    r.width = v
+                    change(r)
+                }
+            }
+            Row(title: "Focus", stacked: true) {
+                Choice(options: [("Takes it", nil), ("Stays behind", false)] as [(String, Bool?)], selected: rule.focused) { v in
+                    var r = rule
+                    r.focused = v
+                    change(r)
+                }
+            }
+            if !model.config.workspaces.isEmpty || rule.workspace != nil {
+                Row(title: "Workspace", stacked: true) {
+                    Choice(options: [("Current", nil)] + model.config.workspaces.map { ($0.name, Optional($0.name)) } as [(String, String?)],
+                           selected: rule.workspace) { v in
                         var r = rule
-                        r.title = titleText.isEmpty ? nil : titleText
+                        r.workspace = v
                         change(r)
                     }
+                }
             }
-        } header: {
-            HStack(spacing: 8) {
-                Image(nsImage: appIcon(rule.app == "*" ? nil : rule.app)).resizable().frame(width: 20, height: 20)
-                Text(rule.app == nil || rule.app == "*" ? "Any app" : appName(rule.app!))
-                Spacer()
-                Button("Remove") { change(nil) }.buttonStyle(.borderless).font(.callout)
+            Row(title: "Only windows titled", last: true) {
+                GummyField(prompt: "any title", text: $titleText, width: 180) {
+                    var r = rule
+                    r.title = titleText.isEmpty ? nil : titleText
+                    change(r)
+                }
+                .onAppear { titleText = rule.title ?? "" }
             }
-        }
-    }
-
-    private func choice<V: Hashable>(_ label: String, _ value: V?, _ options: [(String, V?)], set: @escaping (inout WindowRule, V?) -> Void) -> some View {
-        Picker(label, selection: Binding(get: { value }, set: { v in
-            var r = rule
-            set(&r, v)
-            change(r)
-        })) {
-            ForEach(Array(options.enumerated()), id: \.offset) { _, o in Text(o.0).tag(o.1) }
         }
     }
 }

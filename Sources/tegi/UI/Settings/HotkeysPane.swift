@@ -79,79 +79,71 @@ struct HotkeysPane: View {
 
     var body: some View {
         let all = commands
-        Form {
-            Section {} header: {
-                Previews(height: 130) {
-                    PreviewCard(caption: "Every shortcut is yours to change") {
-                        HStack(spacing: 10) {
-                            KeyCap("⌥")
-                            Text("+").font(.system(size: 18, weight: .bold, design: .rounded)).foregroundStyle(.white.opacity(0.7))
-                            KeyCap("H")
-                            Image(systemName: "arrow.right").font(.system(size: 14, weight: .bold)).foregroundStyle(tegiBlue).padding(.horizontal, 6)
-                            Friend(radius: 6).frame(width: 34, height: 50)
-                            Mascot(ringWidth: 2.5, radius: 6).frame(width: 40, height: 50)
+        Hero(height: 108) {
+            HStack(spacing: 10) {
+                KeyCap(text: "⌥")
+                Text("+").font(.system(size: 16, weight: .bold, design: .rounded)).foregroundStyle(tegiBlue)
+                KeyCap(text: "H")
+                Image(systemName: "arrow.right").font(.system(size: 13, weight: .bold)).foregroundStyle(tegiBlue).padding(.horizontal, 6)
+                Friend(radius: 6).frame(width: 34, height: 48)
+                Mascot(ringWidth: 2.5, radius: 7).frame(width: 40, height: 48)
+            }
+        }
+        GummyField(prompt: "Find a command or a key", text: $search)
+            .padding(.horizontal, 16)
+            .padding(.bottom, Space.between)
+        if let note {
+            Label(note, systemImage: "arrow.triangle.swap")
+                .font(.system(size: 12, design: .rounded))
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(tegiBlue.opacity(0.15), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .padding(.horizontal, 16)
+                .padding(.bottom, Space.between)
+        }
+        ForEach(HotkeyGroup.allCases) { group in
+            let rows = all.filter { HotkeyGroup($0) == group }
+            if !rows.isEmpty {
+                CardTitle(group.rawValue)
+                Card {
+                    ForEach(Array(rows.enumerated()), id: \.offset) { i, command in
+                        Row(title: title(of: command), last: i == rows.count - 1) {
+                            HStack(spacing: 6) {
+                                ForEach(keys(command), id: \.description) { combo in
+                                    KeyCap(text: combo.symbol, live: recording == Recording(command: command, old: combo))
+                                        .onTapGesture { record(command, replacing: combo) }
+                                        .contextMenu { Button("Remove shortcut") { model.bind(command, from: combo, to: nil) } }
+                                        .help("Click to change; right-click to remove")
+                                }
+                                if recording == Recording(command: command, old: nil) {
+                                    KeyCap(text: "", live: true).onTapGesture { stop() }
+                                } else {
+                                    Button { record(command, replacing: nil) } label: { Image(systemName: "plus").font(.system(size: 10, weight: .bold)) }
+                                        .buttonStyle(GummyButtonStyle())
+                                        .help("Add a shortcut")
+                                }
+                            }
                         }
                     }
                 }
             }
-            if let note {
-                Section {
-                    Label(note, systemImage: "arrow.triangle.swap").foregroundStyle(.secondary)
-                }
-            }
-            ForEach(HotkeyGroup.allCases) { group in
-                let rows = all.filter { HotkeyGroup($0) == group }
-                if !rows.isEmpty {
-                    Section {
-                        ForEach(rows, id: \.words) { command in
-                            LabeledContent(title(of: command)) {
-                                HStack(spacing: 6) {
-                                    ForEach(keys(command), id: \.description) { combo in
-                                        shortcut(combo.symbol, live: recording == Recording(command: command, old: combo)) {
-                                            record(command, replacing: combo)
-                                        }
-                                        .contextMenu { Button("Remove Shortcut") { model.bind(command, from: combo, to: nil) } }
-                                    }
-                                    if recording == Recording(command: command, old: nil) {
-                                        shortcut("", live: true) { stop() }
-                                    } else {
-                                        Button { record(command, replacing: nil) } label: { Image(systemName: "plus") }
-                                            .buttonStyle(.borderless)
-                                            .help("Add a shortcut")
-                                    }
-                                }
-                            }
-                        }
-                    } header: { Heading(group.rawValue) }
-                }
-            }
-            Section {
-                Button("Add a Shortcut That Opens an App…") {
-                    let panel = NSOpenPanel()
-                    panel.directoryURL = URL(fileURLWithPath: "/Applications")
-                    panel.allowedContentTypes = [.application]
-                    guard panel.runModal() == .OK, let url = panel.url, let id = Bundle(url: url)?.bundleIdentifier else { return }
-                    let command = Command.spawn(["open", "-b", id])
-                    pending = command
-                    record(command, replacing: nil)
-                }
-            } footer: {
-                Note("Click a shortcut to change it, then press the new keys. Esc cancels; Delete removes it.")
-            }
-            Section {} footer: { PaneFooter() }
         }
-        .formStyle(.grouped)
-        .searchable(text: $search, placement: .toolbar, prompt: "Find a command or key")
+        HStack {
+            Button("Add a shortcut that opens an app…") {
+                let panel = NSOpenPanel()
+                panel.directoryURL = URL(fileURLWithPath: "/Applications")
+                panel.allowedContentTypes = [.application]
+                guard panel.runModal() == .OK, let url = panel.url, let id = Bundle(url: url)?.bundleIdentifier else { return }
+                let command = Command.spawn(["open", "-b", id])
+                pending = command
+                record(command, replacing: nil)
+            }
+            .buttonStyle(GummyButtonStyle(prominent: true))
+            Spacer()
+        }
+        .padding(.horizontal, Space.page)
+        .padding(.bottom, 8)
         .onDisappear { stop() }
-    }
-
-    private func shortcut(_ text: String, live: Bool, tap: @escaping () -> Void) -> some View {
-        Button(action: tap) {
-            Text(live ? "Type Shortcut…" : text).monospaced(!live).frame(minWidth: 44)
-        }
-        .buttonStyle(.bordered)
-        .controlSize(.small)
-        .tint(live ? .accentColor : nil)
     }
 
     private func record(_ command: Command, replacing old: KeyCombo?) {
@@ -202,20 +194,5 @@ struct HotkeysPane: View {
         }
         model.bind(r.command, from: r.old, to: combo)
         pending = nil
-    }
-}
-
-struct KeyCap: View {
-    let text: String
-    init(_ text: String) { self.text = text }
-
-    var body: some View {
-        Text(text)
-            .font(.system(size: 18, weight: .semibold, design: .rounded))
-            .foregroundStyle(SwiftUI.Color(red: 0.15, green: 0.16, blue: 0.3))
-            .frame(width: 40, height: 40)
-            .background(LinearGradient(colors: [.white, SwiftUI.Color(red: 0.85, green: 0.87, blue: 0.95)], startPoint: .top, endPoint: .bottom),
-                        in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-            .shadow(color: .black.opacity(0.3), radius: 0, y: 2.5)
     }
 }

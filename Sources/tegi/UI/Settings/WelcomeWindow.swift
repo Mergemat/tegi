@@ -49,7 +49,7 @@ final class WelcomeWindow {
     }
 
     private func make() -> NSWindow {
-        let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 520, height: 600),
+        let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 480, height: 480),
                               styleMask: [.titled, .closable, .fullSizeContentView], backing: .buffered, defer: false)
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
@@ -71,110 +71,89 @@ final class WelcomeWindow {
 
 struct WelcomeView: View {
     @ObservedObject var permissions: Permissions
+    @Environment(\.colorScheme) private var scheme
     let done: () -> Void
     let restart: () -> Void
     @State private var login = SMAppService.mainApp.status == .enabled
 
     var body: some View {
+        let t = Theme(scheme)
         VStack(spacing: 0) {
-            Image(nsImage: tegiIcon).resizable().frame(width: 120, height: 120)
-                .shadow(color: tegiBlue.opacity(0.35), radius: 18, y: 6)
-                .padding(.top, 34)
-            Text("Hi, I'm tegi!").font(.system(size: 30, weight: .bold)).padding(.top, 10)
+            Image(nsImage: tegiIcon).resizable().frame(width: 104, height: 104)
+                .shadow(color: tegiBlue.opacity(0.45), radius: 18, y: 6)
+                .padding(.top, 40)
+            Text("Hi, I'm tegi!").font(.system(size: 28, weight: .bold, design: .rounded)).foregroundStyle(t.text).padding(.top, 10)
             Text("Two quick permissions and your windows start tiling.")
-                .foregroundStyle(.secondary).padding(.top, 4)
+                .font(.system(size: 13, design: .rounded)).foregroundStyle(t.secondary).padding(.top, 4).padding(.bottom, 22)
 
-            VStack(spacing: 12) {
-                PermissionRow(symbol: "hand.raised.fill", tint: SwiftUI.Color(red: 0.42, green: 0.7, blue: 1),
-                              title: "Accessibility", detail: "To move and resize your windows.", granted: permissions.accessibility) {
+            Card {
+                PermissionRow(title: "Accessibility", detail: "To move and resize your windows.", granted: permissions.accessibility) {
                     let prompt = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
                     _ = AXIsProcessTrustedWithOptions(prompt)
                     NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
                 }
-                PermissionRow(symbol: "rectangle.dashed.badge.record", tint: SwiftUI.Color(red: 1, green: 0.5, blue: 0.72),
-                              title: "Screen Recording", detail: "For smooth workspace slides and the overview. Optional.",
-                              granted: permissions.screen) {
+                PermissionRow(title: "Screen Recording", detail: "For smooth slides and the overview. Optional.", granted: permissions.screen,
+                              last: !(permissions.screen && !permissions.screenAtLaunch) && !Bundle.main.bundlePath.hasPrefix("/Applications/")) {
                     CGRequestScreenCaptureAccess()
                     NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")!)
                 }
                 if permissions.screen && !permissions.screenAtLaunch {
-                    HStack {
-                        Text("macOS applies Screen Recording after a restart.").font(.callout).foregroundStyle(.secondary)
-                        Spacer()
-                        Button("Restart tegi", action: restart)
+                    Row(title: "One restart to go", detail: "macOS applies Screen Recording after a restart.",
+                        last: !Bundle.main.bundlePath.hasPrefix("/Applications/")) {
+                        Button("Restart tegi", action: restart).buttonStyle(GummyButtonStyle())
                     }
-                    .padding(.horizontal, 6)
                 }
                 if Bundle.main.bundlePath.hasPrefix("/Applications/") {
-                    HStack(spacing: 12) {
-                        Tile(symbol: "sunrise.fill", tint: SwiftUI.Color(red: 1, green: 0.66, blue: 0.3), size: 34)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Start at login").font(.system(size: 14, weight: .semibold))
-                            Text("So your windows are tiled from the moment you log in.").font(.system(size: 12)).foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        Toggle("", isOn: Binding(get: { login }, set: { on in
+                    Row(title: "Start at login", detail: "Tiled from the moment you log in.", last: true) {
+                        GummyToggle(isOn: login) { on in
                             if on { try? SMAppService.mainApp.register() } else { try? SMAppService.mainApp.unregister() }
                             login = SMAppService.mainApp.status == .enabled
-                        }))
-                        .toggleStyle(.switch).labelsHidden()
+                        }
                     }
-                    .padding(14)
-                    .background(SwiftUI.Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                 }
             }
-            .padding(.horizontal, 30)
-            .padding(.top, 26)
 
-            Spacer(minLength: 20)
+            Spacer(minLength: 16)
             Button(action: done) {
                 Text(permissions.accessibility ? "Start tiling" : "Waiting for Accessibility…")
-                    .font(.system(size: 15, weight: .semibold))
                     .frame(maxWidth: .infinity)
-                    .padding(.vertical, 6)
+                    .padding(.vertical, 5)
             }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
+            .buttonStyle(GummyButtonStyle(prominent: permissions.accessibility))
             .disabled(!permissions.accessibility)
-            .padding(.horizontal, 30)
-            .padding(.bottom, 28)
+            .padding(.horizontal, Space.page)
+            .padding(.bottom, Space.page)
         }
-        .frame(width: 520, height: 600)
-        .fontDesign(.rounded)
-        .tint(tegiBlue)
+        .frame(width: 480, height: 480)
+        .background {
+            ZStack {
+                t.background
+                if t.night { Stars() }
+            }
+            .ignoresSafeArea()
+        }
         .animation(.spring(duration: 0.35), value: permissions.accessibility)
         .animation(.spring(duration: 0.35), value: permissions.screen)
     }
 }
 
 struct PermissionRow: View {
-    let symbol: String
-    let tint: SwiftUI.Color
     let title: String
     let detail: String
     let granted: Bool
+    var last = false
     let allow: () -> Void
 
     var body: some View {
-        HStack(spacing: 12) {
-            Tile(symbol: symbol, tint: tint, size: 34)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.system(size: 14, weight: .semibold))
-                Text(detail).font(.system(size: 12)).foregroundStyle(.secondary)
-            }
-            Spacer()
+        Row(title: title, detail: detail, last: last) {
             if granted {
                 Label("Allowed", systemImage: "checkmark.circle.fill")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(SwiftUI.Color(red: 0.3, green: 0.78, blue: 0.5))
+                    .font(.system(size: 12.5, weight: .bold, design: .rounded))
+                    .foregroundStyle(SwiftUI.Color(hex: 0x3fcf8e))
                     .transition(.scale.combined(with: .opacity))
             } else {
-                Button("Allow…", action: allow)
+                Button("Allow…", action: allow).buttonStyle(GummyButtonStyle(prominent: true))
             }
         }
-        .padding(14)
-        .background(SwiftUI.Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
-            .strokeBorder(granted ? SwiftUI.Color(red: 0.3, green: 0.78, blue: 0.5).opacity(0.5) : SwiftUI.Color.primary.opacity(0.07)))
     }
 }
