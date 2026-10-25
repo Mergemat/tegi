@@ -53,24 +53,30 @@ private struct Pair {
     let go: Command
     let take: Command
 
-    static let around: [Pair] = [
-        Pair(title: "Column on the left", go: .focusColumnLeft, take: .moveColumnLeft),
-        Pair(title: "Column on the right", go: .focusColumnRight, take: .moveColumnRight),
-        Pair(title: "Window above", go: .focusWindowUp, take: .moveWindowUp),
-        Pair(title: "Window below", go: .focusWindowDown, take: .moveWindowDown),
-        Pair(title: "First column", go: .focusColumnFirst, take: .moveColumnToFirst),
-        Pair(title: "Last column", go: .focusColumnLast, take: .moveColumnToLast),
-        Pair(title: "Workspace above", go: .focusWorkspaceUp, take: .moveColumnToWorkspaceUp),
-        Pair(title: "Workspace below", go: .focusWorkspaceDown, take: .moveColumnToWorkspaceDown),
-        Pair(title: "Next display", go: .focusMonitor(.next), take: .moveColumnToMonitor(.next)),
-        Pair(title: "Previous display", go: .focusMonitor(.previous), take: .moveColumnToMonitor(.previous)),
+    static let columns: [Pair] = [
+        Pair(title: "On the left", go: .focusColumnLeft, take: .moveColumnLeft),
+        Pair(title: "On the right", go: .focusColumnRight, take: .moveColumnRight),
+        Pair(title: "First", go: .focusColumnFirst, take: .moveColumnToFirst),
+        Pair(title: "Last", go: .focusColumnLast, take: .moveColumnToLast),
+    ]
+    static let stack: [Pair] = [
+        Pair(title: "Above", go: .focusWindowUp, take: .moveWindowUp),
+        Pair(title: "Below", go: .focusWindowDown, take: .moveWindowDown),
+    ]
+    static let workspaces: [Pair] = [
+        Pair(title: "Above", go: .focusWorkspaceUp, take: .moveColumnToWorkspaceUp),
+        Pair(title: "Below", go: .focusWorkspaceDown, take: .moveColumnToWorkspaceDown),
+    ]
+    static let displays: [Pair] = [
+        Pair(title: "Next", go: .focusMonitor(.next), take: .moveColumnToMonitor(.next)),
+        Pair(title: "Previous", go: .focusMonitor(.previous), take: .moveColumnToMonitor(.previous)),
     ]
 
     static let numbered: [Pair] = (1...9).map {
         Pair(title: "Workspace \($0)", go: .focusWorkspace(.index($0)), take: .moveColumnToWorkspace(.index($0)))
     }
 
-    static let all = around + numbered
+    static let all = columns + stack + workspaces + displays + numbered
 }
 
 struct HotkeysPane: View {
@@ -82,8 +88,7 @@ struct HotkeysPane: View {
     @State private var note: String?
     @State private var monitor: Any?
     @State private var numbers = false
-    @State private var more: Set<HotkeyGroup> = []
-    @State private var lit: Command?
+    @State private var more: Set<Topic> = []
 
     struct Recording: Equatable {
         var command: Command
@@ -154,15 +159,37 @@ struct HotkeysPane: View {
                 }
             }
         } else {
-            CardTitle("Getting around")
-            Card {
-                AroundMap(key: { keys($0).first }, lit: lit, mod: mod)
-                    .padding(Space.card)
-                Rectangle().fill(t.divider).frame(height: 1)
+            ForEach(Topic.allCases) { topic in section(topic) }
+        }
+        Spacer(minLength: 0).onDisappear { stop() }
+    }
+
+    private static let column: CGFloat = 132
+    // Every pair row leaves room for the numbers row's chevron, so the columns line up.
+    private static let chevron: CGFloat = 12
+
+    @ViewBuilder private func section(_ topic: Topic) -> some View {
+        let t = Theme(scheme)
+        let pairs = topic.pairs
+        let paired = Set(Pair.all.flatMap { [$0.go.words, $0.take.words] })
+        let rows = everything.filter { Topic($0) == topic && !paired.contains($0.words) }
+        let bound = rows.filter { !keys($0).isEmpty || $0 == pending }
+        let rest = rows.filter { keys($0).isEmpty && $0 != pending }
+        let open = more.contains(topic)
+        let shown = bound + (open ? rest : [])
+        CardTitle(topic.title)
+        Card {
+            TopicArt(topic: topic).frame(height: 64).frame(maxWidth: .infinity).padding(.vertical, 14)
+            Rectangle().fill(t.divider).frame(height: 1)
+            if !pairs.isEmpty {
                 pairHeader
-                ForEach(Array(Pair.around.enumerated()), id: \.offset) { _, pair in pairRow(pair) }
+                ForEach(Array(pairs.enumerated()), id: \.offset) { i, pair in
+                    pairRow(pair, last: i == pairs.count - 1 && topic != .workspaces && shown.isEmpty && rest.isEmpty)
+                }
+            }
+            if topic == .workspaces {
                 Button { withAnimation(.spring(duration: 0.3)) { numbers.toggle() } } label: {
-                    Row(title: "Workspaces 1 to 9", last: !numbers) {
+                    Row(title: "1 to 9", last: !numbers && shown.isEmpty && rest.isEmpty) {
                         if !numbers { numberSummary }
                         Image(systemName: "chevron.right").font(.system(size: 11, weight: .bold)).foregroundStyle(t.faint)
                             .rotationEffect(.degrees(numbers ? 90 : 0))
@@ -172,54 +199,37 @@ struct HotkeysPane: View {
                 }
                 .buttonStyle(.plain)
                 if numbers {
-                    ForEach(Array(Pair.numbered.enumerated()), id: \.offset) { i, pair in pairRow(pair, last: i == 8) }
-                }
-            }
-
-            let paired = Set(Pair.all.flatMap { [$0.go.words, $0.take.words] })
-            ForEach(HotkeyGroup.allCases) { group in
-                let rows = everything.filter { HotkeyGroup($0) == group && !paired.contains($0.words) }
-                let bound = rows.filter { !keys($0).isEmpty || $0 == pending }
-                let rest = rows.filter { keys($0).isEmpty && $0 != pending }
-                let open = more.contains(group)
-                if !bound.isEmpty || group == .launch {
-                    CardTitle(group.rawValue)
-                    Card {
-                        let shown = bound + (open ? rest : [])
-                        ForEach(Array(shown.enumerated()), id: \.offset) { i, command in
-                            Row(title: title(of: command), last: i == shown.count - 1 && rest.isEmpty && group != .launch) { shortcuts(command) }
-                        }
-                        if group == .launch {
-                            Row(title: "Open an app", last: true) {
-                                Button("Choose…") { chooseApp() }.buttonStyle(GummyButtonStyle())
-                            }
-                        } else if !rest.isEmpty {
-                            Button {
-                                withAnimation(.spring(duration: 0.3)) { if open { more.remove(group) } else { more.insert(group) } }
-                            } label: {
-                                HStack {
-                                    Text(open ? "Fewer" : "\(rest.count) more without a shortcut")
-                                    Spacer()
-                                    Image(systemName: "chevron.down").rotationEffect(.degrees(open ? 180 : 0))
-                                }
-                                .font(.system(size: 12, weight: .semibold, design: .rounded))
-                                .foregroundStyle(t.faint)
-                                .padding(.horizontal, Space.card)
-                                .frame(minHeight: 40)
-                                .contentShape(Rectangle())
-                            }
-                            .buttonStyle(.plain)
-                        }
+                    ForEach(Array(Pair.numbered.enumerated()), id: \.offset) { i, pair in
+                        pairRow(pair, last: i == 8 && shown.isEmpty && rest.isEmpty)
                     }
                 }
             }
+            ForEach(Array(shown.enumerated()), id: \.offset) { i, command in
+                Row(title: title(of: command), last: i == shown.count - 1 && rest.isEmpty && topic != .launch) { shortcuts(command) }
+            }
+            if topic == .launch {
+                Row(title: "Open an app", last: true) {
+                    Button("Choose…") { chooseApp() }.buttonStyle(GummyButtonStyle())
+                }
+            } else if !rest.isEmpty {
+                Button {
+                    withAnimation(.spring(duration: 0.3)) { if open { more.remove(topic) } else { more.insert(topic) } }
+                } label: {
+                    HStack {
+                        Text(open ? "Fewer" : "\(rest.count) more without a shortcut")
+                        Spacer()
+                        Image(systemName: "chevron.down").rotationEffect(.degrees(open ? 180 : 0))
+                    }
+                    .font(.system(size: 12, weight: .semibold, design: .rounded))
+                    .foregroundStyle(t.faint)
+                    .padding(.horizontal, Space.card)
+                    .frame(minHeight: 40)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
         }
-        Spacer(minLength: 0).onDisappear { stop() }
     }
-
-    private static let column: CGFloat = 132
-    // Every pair row leaves room for the numbers row's chevron, so the columns line up.
-    private static let chevron: CGFloat = 12
 
     private var pairHeader: some View {
         // The same spacing as a row's controls, so the headers sit over their columns.
@@ -240,10 +250,6 @@ struct HotkeysPane: View {
             shortcuts(pair.go).frame(width: Self.column, alignment: .leading)
             shortcuts(pair.take).frame(width: Self.column, alignment: .leading)
             SwiftUI.Color.clear.frame(width: Self.chevron, height: 1)
-        }
-        .contentShape(Rectangle())
-        .onHover { inside in
-            withAnimation(.spring(duration: 0.25)) { lit = inside ? pair.go : (lit == pair.go ? nil : lit) }
         }
     }
 
@@ -346,86 +352,172 @@ struct HotkeysPane: View {
     }
 }
 
-/// The focused window in its strip, with every place the table can take you and the key that gets there.
-private struct AroundMap: View {
+/// The hotkeys page's sections, in the order people reach for them.
+enum Topic: CaseIterable, Identifiable {
+    case basics, columns, stack, workspaces, displays, arranging, sizes, floating, recent, launch
+    var id: Self { self }
+
+    init(_ command: Command) {
+        let name = command.words.first ?? ""
+        switch HotkeyGroup(command) {
+        case .basics: self = .basics
+        case .focus, .move: self = name.contains("window") && !name.contains("column") && !name.contains("swap") ? .stack : .columns
+        case .workspaces: self = .workspaces
+        case .displays: self = .displays
+        case .columns: self = .arranging
+        case .sizes: self = .sizes
+        case .floating: self = .floating
+        case .recent: self = .recent
+        case .launch: self = .launch
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .basics: "Basics"
+        case .columns: "Columns"
+        case .stack: "Windows in a column"
+        case .workspaces: "Workspaces"
+        case .displays: "Displays"
+        case .arranging: "Arranging columns"
+        case .sizes: "Sizes"
+        case .floating: "Floating"
+        case .recent: "Recent windows"
+        case .launch: "Open apps"
+        }
+    }
+
+    fileprivate var pairs: [Pair] {
+        switch self {
+        case .columns: Pair.columns
+        case .stack: Pair.stack
+        case .workspaces: Pair.workspaces
+        case .displays: Pair.displays
+        default: []
+        }
+    }
+}
+
+/// A small picture of what a section's shortcuts do.
+private struct TopicArt: View {
     @Environment(\.colorScheme) private var scheme
-    let key: (Command) -> KeyCombo?
-    let lit: Command?
-    let mod: Mods
+    let topic: Topic
 
     var body: some View {
         let t = Theme(scheme)
-        VStack(spacing: 12) {
-            VStack(spacing: 8) {
-            peek(.focusWorkspaceUp)
+        switch topic {
+        case .basics:
+            HStack(spacing: 6) {
+                ForEach(0..<3, id: \.self) { i in
+                    VStack(spacing: 4) {
+                        Friend(radius: 4, face: false).frame(width: 30, height: 20)
+                        if i == 1 { Mascot(ringWidth: 1.5, radius: 4).frame(width: 30, height: 20) } else { Friend(radius: 4, face: false).frame(width: 30, height: 20) }
+                    }
+                }
+            }
+            .padding(8)
+            .background(t.chip, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        case .columns:
             HStack(spacing: 8) {
-                place(.focusColumnFirst, width: 42)
-                dots
-                place(.focusColumnLeft, width: 48)
-                VStack(spacing: 6) {
-                    place(.focusWindowUp, width: 60, height: 34)
-                    Mascot(ringWidth: 2.5, radius: 9).frame(width: 60, height: 62)
-                    place(.focusWindowDown, width: 60, height: 34)
+                Friend(radius: 6).frame(width: 30, height: 56).opacity(0.6)
+                arrow("arrow.left")
+                Mascot(ringWidth: 2, radius: 7).frame(width: 44, height: 56)
+                arrow("arrow.right")
+                Friend(radius: 6).frame(width: 30, height: 56).opacity(0.6)
+            }
+        case .stack:
+            HStack(spacing: 10) {
+                VStack(spacing: 4) {
+                    Friend(radius: 5, face: false).frame(width: 48, height: 14).opacity(0.6)
+                    Mascot(ringWidth: 2, radius: 6).frame(width: 48, height: 30)
+                    Friend(radius: 5, face: false).frame(width: 48, height: 14).opacity(0.6)
                 }
-                place(.focusColumnRight, width: 48)
-                dots
-                place(.focusColumnLast, width: 42)
+                arrow("arrow.up.arrow.down")
             }
-            .frame(height: 146)
-            .padding(10)
-            .background(t.chip, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-            peek(.focusWorkspaceDown)
-            }
-            // As wide as the strip, so the workspaces above and below line up with it.
-            .fixedSize(horizontal: true, vertical: false)
-            SceneCaption("\(added) to any of these and the window comes along")
-        }
-        .frame(maxWidth: .infinity)
-    }
-
-    // A key without Shift adds it; one that already holds Shift moves to ⌥⇧.
-    private var added: String {
-        let take = Mods.shift.under(mod)
-        return take.isSuperset(of: mod) ? "Add ⇧" : "Use \(take.symbol)"
-    }
-
-    private var dots: some View {
-        Text("···").font(.system(size: 14, weight: .heavy, design: .rounded)).foregroundStyle(Theme(scheme).faint)
-    }
-
-    private func place(_ command: Command, width: CGFloat, height: CGFloat? = nil) -> some View {
-        let on = lit == command
-        return ZStack {
-            Friend(radius: 8, face: (height ?? 99) > 40)
-                .opacity(lit == nil || on ? 1 : 0.45)
-                .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(on ? tegiBlue : .clear, lineWidth: 2.5))
-                .shadow(color: on ? tegiBlue.opacity(0.6) : .clear, radius: 8)
-            if let combo = key(command) {
-                KeyCap(text: combo.symbol(hyper: mod)).scaleEffect(on ? 1.1 : 1)
-                    .frame(maxHeight: .infinity, alignment: height == nil ? .bottom : .center)
-                    .padding(.bottom, height == nil ? 8 : 0)
-            }
-        }
-        .frame(width: width, height: height)
-    }
-
-    private func peek(_ command: Command) -> some View {
-        let t = Theme(scheme), on = lit == command
-        return ZStack {
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(t.chip)
-                .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(on ? tegiBlue : .clear, lineWidth: 2))
-                .shadow(color: on ? tegiBlue.opacity(0.5) : .clear, radius: 8)
-                .frame(maxWidth: .infinity)
-                .frame(height: 30)
-            if let combo = key(command) {
-                HStack(spacing: 6) {
-                    KeyCap(text: combo.symbol(hyper: mod))
-                    Text(command == .focusWorkspaceUp ? "workspace above" : "workspace below")
-                        .font(.system(size: 11, weight: .semibold, design: .rounded)).foregroundStyle(t.secondary)
+        case .workspaces:
+            HStack(spacing: 10) {
+                VStack(spacing: 5) {
+                    bar(false)
+                    bar(true)
+                    bar(false)
                 }
-                .scaleEffect(on ? 1.06 : 1)
+                arrow("arrow.up.arrow.down")
             }
+        case .displays:
+            HStack(spacing: 10) {
+                display(true)
+                arrow("arrow.right")
+                display(false)
+            }
+        case .arranging:
+            HStack(spacing: 10) {
+                HStack(spacing: 4) {
+                    Mascot(ringWidth: 2, radius: 6).frame(width: 30, height: 52)
+                    Friend(radius: 6).frame(width: 30, height: 52)
+                }
+                arrow("arrow.right")
+                VStack(spacing: 4) {
+                    Mascot(ringWidth: 2, radius: 6).frame(width: 40, height: 24)
+                    Friend(radius: 6, face: false).frame(width: 40, height: 24)
+                }
+            }
+        case .sizes:
+            HStack(spacing: 6) {
+                arrow("arrow.left")
+                Mascot(ringWidth: 2, radius: 7).frame(width: 70, height: 56)
+                arrow("arrow.right")
+            }
+        case .floating:
+            ZStack {
+                HStack(spacing: 4) {
+                    ForEach(0..<3, id: \.self) { _ in Friend(radius: 5, face: false).frame(width: 34, height: 50).opacity(0.5) }
+                }
+                Mascot(ringWidth: 2, radius: 6).frame(width: 46, height: 36)
+                    .offset(x: 14, y: -6)
+                    .shadow(color: .black.opacity(0.3), radius: 6, y: 4)
+            }
+        case .recent:
+            HStack(spacing: 10) {
+                ZStack {
+                    Friend(radius: 6, face: false).frame(width: 40, height: 48).offset(x: -12, y: -4).opacity(0.5)
+                    Friend(radius: 6, face: false).frame(width: 40, height: 48).offset(x: -6, y: -2).opacity(0.75)
+                    Mascot(ringWidth: 2, radius: 6).frame(width: 40, height: 48)
+                }
+                arrow("arrow.uturn.backward")
+            }
+        case .launch:
+            HStack(spacing: 10) {
+                Image(systemName: "app.dashed").font(.system(size: 28, weight: .semibold)).foregroundStyle(t.faint)
+                arrow("arrow.right")
+                Mascot(ringWidth: 2, radius: 7).frame(width: 44, height: 56)
+            }
+        }
+    }
+
+    private func arrow(_ symbol: String) -> some View {
+        Image(systemName: symbol).font(.system(size: 13, weight: .bold)).foregroundStyle(tegiBlue)
+    }
+
+    private func bar(_ current: Bool) -> some View {
+        HStack(spacing: 3) {
+            Friend(radius: 3, face: false).frame(width: 18)
+            if current { Mascot(ringWidth: 1.5, radius: 3).frame(width: 18) } else { Friend(radius: 3, face: false).frame(width: 18) }
+            Friend(radius: 3, face: false).frame(width: 18)
+        }
+        .padding(3)
+        .frame(height: 18)
+        .background(Theme(scheme).chip, in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+        .opacity(current ? 1 : 0.55)
+    }
+
+    private func display(_ current: Bool) -> some View {
+        VStack(spacing: 3) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Theme(scheme).chip)
+                if current { Mascot(ringWidth: 1.5, radius: 4).frame(width: 22, height: 26) } else { Friend(radius: 4).frame(width: 22, height: 26).opacity(0.6) }
+            }
+            .frame(width: 64, height: 42)
+            Capsule().fill(Theme(scheme).chip).frame(width: 24, height: 4)
         }
     }
 }
