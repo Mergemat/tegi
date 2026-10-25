@@ -12,17 +12,18 @@ brew install mergemat/tap/tegi
 tegi starts right away and at every login. It asks for Accessibility access (to move windows) and Screen Recording access (for workspace slides and the overview). On first run it writes `~/.config/tegi/config` for your changes and shows the important hotkeys; every default, with what it does, is in `~/.config/tegi/defaults`. Saved changes apply right away, and a broken line keeps the last good config while a banner says which line.
 
 - Windows glide on springs when the strip scrolls, columns move or sizes change, and workspaces slide vertically.
-- Option+O, the top-left corner or a four-finger swipe up opens the overview: every workspace, zoomed out. Drag windows between workspaces there.
+- Option+O, the hot corner (top-left unless you pick another) or a four-finger swipe up opens the overview: every workspace, zoomed out. Drag windows between workspaces there.
 - Swipe three fingers to scroll the strip or switch workspaces; Option with two fingers or a mouse wheel does the same.
 - Option+drag moves a window into a new spot; Option+right-drag resizes it.
 - Option+Tab goes back through recent windows.
+- Every setting has a place in the Settings window, and the config stays one plain-text file.
 - `tegi msg action <command>` runs any command, `tegi msg state` prints the layout as JSON, `tegi msg event-stream` prints it on every change, and `tegi validate` checks a config.
 
 ## Limits macOS imposes
 
 - Hidden windows keep a sliver visible in a bottom corner, because macOS won't let a window go fully off screen. Quitting or pausing tegi puts them back; after a crash, drag them out.
 - Windows don't fade in or out, and nothing is clipped at a display's edge: tegi can't change another app's opacity or clip its window.
-- Workspace slides and the overview show pictures of your windows, refreshed every second or so (twice a second in the overview). Live capture would put macOS's screen-sharing indicator in the menu bar.
+- Workspace slides, the overview and the switcher show pictures of your windows, taken as you leave a window and every few seconds while you work (twice a second in the overview). Live capture would put macOS's screen-sharing indicator in the menu bar.
 - Use one macOS Space per display. tegi workspaces replace Spaces.
 
 ## Development
