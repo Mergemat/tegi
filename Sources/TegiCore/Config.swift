@@ -188,17 +188,19 @@ public struct Config: Equatable {
         return merged
     }
     /// Your key: shortcuts written as mod+… use it, and move with it.
-    public var mod: Mods = .alt
+    public var mod: Mods = .alt { didSet { resolve() } }
     /// Shortcuts written on your key, by the keys pressed besides it.
-    var onMod: [KeyCombo: Command] = [:]
-    var fixed: [KeyCombo: Command] = [:]
+    var onMod: [KeyCombo: Command] = [:] { didSet { resolve() } }
+    var fixed: [KeyCombo: Command] = [:] { didSet { resolve() } }
+    /// Every shortcut on its actual keys. Kept rather than worked out on each read: every keypress and every settings row reads it.
+    public private(set) var binds: [KeyCombo: Command] = [:]
 
-    public var binds: [KeyCombo: Command] {
+    private mutating func resolve() {
         var all: [KeyCombo: Command] = [:]
         for (shape, command) in onMod {
             if let combo = KeyCombo(keyCode: shape.keyCode, mods: shape.mods.under(mod)) { all[combo] = command }
         }
-        return all.merging(fixed) { _, fixed in fixed }
+        binds = all.merging(fixed) { _, fixed in fixed }
     }
 
     /// The keys a config line names: mod+… is resolved against your key.

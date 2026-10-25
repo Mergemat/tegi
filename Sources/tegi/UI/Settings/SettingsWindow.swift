@@ -123,7 +123,6 @@ struct SettingsView: View {
     @ObservedObject var model: SettingsModel
     @Environment(\.colorScheme) private var scheme
     @AppStorage("settings.pane") private var pane: Pane = .layout
-    @State private var forward = true
 
     var body: some View {
         let t = Theme(scheme)
@@ -161,8 +160,7 @@ struct SettingsView: View {
                 }
                 RailItem(pane: p, selected: p == pane) {
                     guard p != pane else { return }
-                    forward = (Pane.allCases.firstIndex(of: p) ?? 0) > (Pane.allCases.firstIndex(of: pane) ?? 0)
-                    withAnimation(.spring(duration: 0.45, bounce: 0.15)) { pane = p }
+                    withAnimation(.easeOut(duration: 0.18)) { pane = p }
                 }
             }
             Spacer(minLength: 0)
@@ -172,7 +170,8 @@ struct SettingsView: View {
 
     private func page(_ t: Theme) -> some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
+            // Lazy, so a long page measures only the cards on screen.
+            LazyVStack(alignment: .leading, spacing: 0) {
                 HStack(alignment: .center, spacing: 12) {
                     VStack(alignment: .leading, spacing: 3) {
                         Text(pane.title).font(.system(size: 24, weight: .bold, design: .rounded)).foregroundStyle(t.text)
@@ -200,8 +199,8 @@ struct SettingsView: View {
         }
         .scrollIndicators(.never)
         .id(pane)
-        .transition(.asymmetric(insertion: .move(edge: forward ? .bottom : .top).combined(with: .opacity),
-                                removal: .move(edge: forward ? .top : .bottom).combined(with: .opacity)))
+        // A fade, not a slide: moving a whole page relays it out on every frame.
+        .transition(.opacity)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(t.page, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
         .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))

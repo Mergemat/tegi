@@ -3,7 +3,8 @@ import TegiCore
 
 // The config file is the only state: every change is written there and comes back through tegi's reload.
 final class SettingsModel: ObservableObject {
-    @Published private(set) var config = Config.builtIn
+    @Published private(set) var config = Config.builtIn { didSet { keymap = Keymap(config) } }
+    private(set) var keymap = Keymap(Config.builtIn)
     @Published private(set) var problem: String?
     /// A change still being dragged: previews show it before it's written.
     @Published private(set) var live: Config?

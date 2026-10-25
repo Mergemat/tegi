@@ -77,6 +77,7 @@ private struct Pair {
     }
 
     static let all = columns + stack + workspaces + displays + numbered
+    static let paired = Set(all.flatMap { [$0.go.words, $0.take.words] })
 }
 
 struct HotkeysPane: View {
@@ -96,15 +97,14 @@ struct HotkeysPane: View {
     }
 
     private var everything: [Command] {
-        var all = Array(Command.simple.values) + model.config.binds.values + (pending.map { [$0] } ?? [])
-        var seen: Set<String> = []
-        all = all.filter { seen.insert($0.words.joined(separator: " ")).inserted }
-        return all.sorted { title(of: $0).localizedStandardCompare(title(of: $1)) == .orderedAscending }
+        let all = model.keymap.commands
+        guard let pending, model.keymap.keys(pending).isEmpty else { return all }
+        return [pending] + all.filter { $0 != pending }
     }
 
-    private func keys(_ command: Command) -> [KeyCombo] {
-        model.config.binds.filter { $0.value == command }.map(\.key).sorted { $0.description < $1.description }
-    }
+    private func keys(_ command: Command) -> [KeyCombo] { model.keymap.keys(command) }
+
+    private func title(of command: Command) -> String { model.keymap.title(command) }
 
     var body: some View {
         let t = Theme(scheme)
@@ -171,8 +171,7 @@ struct HotkeysPane: View {
     @ViewBuilder private func section(_ topic: Topic) -> some View {
         let t = Theme(scheme)
         let pairs = topic.pairs
-        let paired = Set(Pair.all.flatMap { [$0.go.words, $0.take.words] })
-        let rows = everything.filter { Topic($0) == topic && !paired.contains($0.words) }
+        let rows = everything.filter { Topic($0) == topic && !Pair.paired.contains($0.words) }
         let bound = rows.filter { !keys($0).isEmpty || $0 == pending }
         let rest = rows.filter { keys($0).isEmpty && $0 != pending }
         let open = more.contains(topic)
@@ -557,4 +556,24 @@ struct ModPicker: View {
             }
         }
     }
+}
+
+/// The keymap as the Hotkeys page reads it: every command in name order, and each one's keys, worked out once per config.
+struct Keymap {
+    let commands: [Command]
+    private let keys: [String: [KeyCombo]]
+    private let titles: [String: String]
+
+    init(_ config: Config) {
+        func id(_ c: Command) -> String { c.words.joined(separator: " ") }
+        var seen: Set<String> = [], titles: [String: String] = [:]
+        let all = (Array(Command.simple.values) + config.binds.values).filter { seen.insert(id($0)).inserted }
+        for c in all { titles[id(c)] = tegi.title(of: c) }
+        commands = all.sorted { titles[id($0)]!.localizedStandardCompare(titles[id($1)]!) == .orderedAscending }
+        keys = Dictionary(grouping: config.binds, by: { id($0.value) }).mapValues { $0.map(\.key).sorted { $0.description < $1.description } }
+        self.titles = titles
+    }
+
+    func keys(_ command: Command) -> [KeyCombo] { keys[command.words.joined(separator: " ")] ?? [] }
+    func title(_ command: Command) -> String { titles[command.words.joined(separator: " ")] ?? tegi.title(of: command) }
 }
