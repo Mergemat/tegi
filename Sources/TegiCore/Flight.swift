@@ -4,33 +4,27 @@ import CoreGraphics
 public struct Flight {
     public var x, y, w, h: Spring
     public var monitor: Int
-    /// How long this window waits behind its slower neighbours; its clock runs that far behind the real one.
-    public let delay: Double
 
-    public init(from: CGRect, to: CGRect, monitor: Int, velocity: Double?, at t: Double, delay: Double = 0,
+    public init(from: CGRect, to: CGRect, monitor: Int, velocity: Double?, at t: Double,
                 position: SpringParams, size: SpringParams, slowdown: Double) {
         x = Spring(from: from.minX, to: to.minX, velocity: velocity ?? 0, start: t, params: position, slowdown: slowdown)
         y = Spring(from: from.minY, to: to.minY, start: t, params: position, slowdown: slowdown)
         w = Spring(from: from.width, to: to.width, start: t, params: size, slowdown: slowdown)
         h = Spring(from: from.height, to: to.height, start: t, params: size, slowdown: slowdown)
         self.monitor = monitor
-        self.delay = delay
     }
 
     public var target: CGRect { CGRect(x: x.to, y: y.to, width: w.to, height: h.to) }
 
     public func frame(at t: Double) -> CGRect {
-        let t = t - delay
         return CGRect(x: x.value(at: t), y: y.value(at: t), width: w.value(at: t), height: h.value(at: t))
     }
 
     public func isDone(at t: Double) -> Bool {
-        let t = t - delay
         return x.isDone(at: t) && y.isDone(at: t) && w.isDone(at: t) && h.isDone(at: t)
     }
 
     public mutating func retarget(to new: CGRect, at t: Double) {
-        let t = t - delay
         x = x.retargeted(to: new.minX, at: t)
         y = y.retargeted(to: new.minY, at: t)
         w = w.retargeted(to: new.width, at: t)

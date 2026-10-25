@@ -22,14 +22,16 @@ final class Motion: NSObject {
 
     func isFlying(_ id: WindowID) -> Bool { flights[id] != nil }
 
+    /// How fast the fastest window slides, in points a second.
+    func speed(at t: Double) -> Double { flights.values.map { abs($0.x.velocity(at: t)) }.max() ?? 0 }
+
     func current(_ id: WindowID, at t: Double) -> (frame: CGRect, monitor: Int)? {
         if let f = flights[id] { return (f.frame(at: t), f.monitor) }
         return resting[id]
     }
 
-    /// A new flight waits `delay` before it sets off, so windows from faster apps wait for slower ones.
     func move(_ id: WindowID, from: CGRect, to: CGRect, monitor: Int, at t: Double, velocity: Double? = nil,
-              delay: Double = 0, springs: Springs) -> Bool {
+              springs: Springs) -> Bool {
         if var f = flights[id] {
             if f.target != to { f.retarget(to: to, at: t) }
             if let velocity { f.x.velocity = velocity }
@@ -37,7 +39,7 @@ final class Motion: NSObject {
             return true
         }
         guard from != to else { return false }
-        flights[id] = Flight(from: from, to: to, monitor: monitor, velocity: velocity, at: t, delay: delay,
+        flights[id] = Flight(from: from, to: to, monitor: monitor, velocity: velocity, at: t,
                              position: springs.position, size: springs.size, slowdown: springs.slowdown)
         resting[id] = nil
         if stats == nil { stats = (0, t, [:]) }

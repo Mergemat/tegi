@@ -97,14 +97,6 @@ final class AppWorker {
 
     private let lock = NSLock()
     private var pending: [WindowID: Job] = [:]
-    private var delay = 0.0
-    /// How long this app takes from tegi's order to a window actually moved, averaged over recent moves.
-    var lag: Double {
-        lock.lock()
-        defer { lock.unlock() }
-        return delay
-    }
-
 
     private struct Job {
         var window: AXUIElement
@@ -112,7 +104,6 @@ final class AppWorker {
         var resize: Bool
         var verify: Bool
         var measured: (WindowID, CGSize) -> Void
-        var sent = CACurrentMediaTime()
         var done: () -> Void
     }
     private var draining = false
@@ -229,10 +220,6 @@ final class AppWorker {
         }
         for (id, job) in jobs {
             let actual = job.window.setFrame(job.frame, resize: job.resize, verify: job.verify)
-            let took = CACurrentMediaTime() - job.sent
-            lock.lock()
-            delay = delay == 0 ? took : delay * 0.85 + took * 0.15
-            lock.unlock()
             DispatchQueue.main.async {
                 if let actual { job.measured(id, actual) }
                 job.done()
