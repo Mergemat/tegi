@@ -49,11 +49,15 @@ func title(of command: Command) -> String {
 
 struct HotkeysPane: View {
     @EnvironmentObject var model: SettingsModel
+    @Environment(\.colorScheme) private var scheme
     @State private var search = ""
     @State private var recording: Recording?
     @State private var pending: Command?
     @State private var note: String?
     @State private var monitor: Any?
+    @State private var shiftMonitor: Any?
+    @State private var shifted = false
+    @State private var hovered: KeyCombo?
 
     struct Recording: Equatable {
         var command: Command
@@ -79,16 +83,42 @@ struct HotkeysPane: View {
 
     var body: some View {
         let all = commands
-        Hero(height: 108) {
-            HStack(spacing: 10) {
-                KeyCap(text: "⌥")
-                Text("+").font(.system(size: 16, weight: .bold, design: .rounded)).foregroundStyle(tegiBlue)
-                KeyCap(text: "H")
-                Image(systemName: "arrow.right").font(.system(size: 13, weight: .bold)).foregroundStyle(tegiBlue).padding(.horizontal, 6)
-                Friend(radius: 6).frame(width: 34, height: 48)
-                Mascot(ringWidth: 2.5, radius: 7).frame(width: 40, height: 48)
+        let mod = model.config.mod
+        let layer = shifted ? Mods.shift.under(mod) : mod
+        CardTitle("Your key")
+        VStack(alignment: .leading, spacing: 8) {
+            ModPicker(mod: mod) { model.setMod($0) }
+            if mod.contains(.shift) {
+                Text("Hyper is ⌃⌥⇧⌘ at once, usually Caps Lock through Karabiner-Elements or Hyperkey. It already holds Shift, so ⌥⇧ takes the window along.")
+                    .font(.system(size: 11.5, design: .rounded)).foregroundStyle(Theme(scheme).secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
+        .padding(.horizontal, 16)
+        .padding(.bottom, 22)
+
+        CardTitle(shifted ? "Taking the window along" : "On your key")
+        Card {
+            KeyboardMap(binds: model.config.binds, mods: layer, live: recording?.old, hover: { hovered = $0 },
+                        tap: { combo in if let c = model.config.binds[combo] { record(c, replacing: combo) } },
+                        remove: { combo in if let c = model.config.binds[combo] { model.bind(c, from: combo, to: nil) } })
+                .padding(Space.card)
+            caption(layer: layer)
+                .padding(.horizontal, Space.card)
+                .padding(.bottom, Space.card)
+        }
+        .onAppear {
+            shiftMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { event in
+                shifted = event.modifierFlags.contains(.shift)
+                return event
+            }
+        }
+        .onDisappear {
+            if let shiftMonitor { NSEvent.removeMonitor(shiftMonitor) }
+            shiftMonitor = nil
+        }
+
+        CardTitle("Every shortcut")
         GummyField(prompt: "Find a command or a key", text: $search)
             .padding(.horizontal, 16)
             .padding(.bottom, Space.between)
@@ -144,6 +174,26 @@ struct HotkeysPane: View {
         .padding(.horizontal, Space.page)
         .padding(.bottom, 8)
         .onDisappear { stop() }
+    }
+
+    @ViewBuilder private func caption(layer: Mods) -> some View {
+        let t = Theme(scheme)
+        HStack(spacing: 8) {
+            if let r = recording {
+                Text("Press the new keys for \(title(of: r.command)). Esc cancels.")
+            } else if let hovered, let command = model.config.binds[hovered] {
+                KeyCap(text: hovered.symbol)
+                Text(title(of: command)).foregroundStyle(t.text)
+                Spacer()
+                Text("Click to change").foregroundStyle(t.faint)
+            } else {
+                Text(shifted ? "Let go of ⇧ to see your key again." : "Hold ⇧ to see what takes the window along. Click a key to change it.")
+            }
+            Spacer(minLength: 0)
+        }
+        .font(.system(size: 12, weight: .semibold, design: .rounded))
+        .foregroundStyle(t.secondary)
+        .frame(minHeight: 26)
     }
 
     private func record(_ command: Command, replacing old: KeyCombo?) {

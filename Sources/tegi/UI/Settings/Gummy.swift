@@ -413,20 +413,29 @@ struct GummyField: View {
     }
 }
 
+/// A shortcut as one raised key: the modifiers quiet, the key itself bold.
 struct KeyCap: View {
+    @Environment(\.colorScheme) private var scheme
     let text: String
     var live = false
 
     var body: some View {
-        Text(live ? "type keys…" : text)
-            .font(.system(size: 12.5, weight: .semibold, design: live ? .rounded : .monospaced))
-            .foregroundStyle(live ? SwiftUI.Color.white : ink)
-            .padding(.horizontal, 7)
-            .frame(minWidth: 26, minHeight: 26)
-            .background(live ? AnyShapeStyle(gummyBlue)
-                             : AnyShapeStyle(LinearGradient(colors: [.white, SwiftUI.Color(hex: 0xd9ddf0)], startPoint: .top, endPoint: .bottom)),
-                        in: RoundedRectangle(cornerRadius: 7, style: .continuous))
-            .shadow(color: .black.opacity(0.3), radius: 0, y: 2)
+        let t = Theme(scheme)
+        let mods = String(text.prefix { "⌃⌥⇧⌘✦".contains($0) })
+        HStack(spacing: 2) {
+            if live {
+                Text("type keys…").foregroundStyle(.white)
+            } else {
+                Text(mods).foregroundStyle(t.secondary)
+                Text(text.dropFirst(mods.count)).foregroundStyle(t.text)
+            }
+        }
+        .font(.system(size: 12.5, weight: .bold, design: .rounded))
+        .padding(.horizontal, 8)
+        .frame(minWidth: 28, minHeight: 26)
+        .background(live ? AnyShapeStyle(gummyBlue) : AnyShapeStyle(t.night ? SwiftUI.Color.white.opacity(0.12) : .white),
+                    in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .shadow(color: t.night ? .black.opacity(0.35) : SwiftUI.Color(hex: 0x6e64be, opacity: 0.25), radius: 0, y: 2)
     }
 }
 

@@ -59,6 +59,8 @@ final class SettingsModel: ObservableObject {
 
     func setList(_ name: String, _ lines: [[String]]) { write(ConfigEditor.setList(name, to: lines, in: text)) }
 
+    func setMod(_ mod: Mods) { write(ConfigEditor.setMod(mod, in: text)) }
+
     func bind(_ command: Command, from old: KeyCombo?, to new: KeyCombo?) {
         write(ConfigEditor.bind(command, from: old, to: new, in: text))
     }

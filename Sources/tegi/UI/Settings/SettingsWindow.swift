@@ -72,7 +72,7 @@ enum Pane: String, CaseIterable, Identifiable {
         case .looks: "The focus ring, corners and the overview."
         case .motion: "Every animation is a spring. Make it yours."
         case .gestures: "Swipes, the modifier and the pointer."
-        case .hotkeys: "Every shortcut, grouped by what it does."
+        case .hotkeys: "One key for tegi, and Shift takes the window along."
         case .apps: "Where apps open, and what starts with tegi."
         case .about: "Hello!"
         }
