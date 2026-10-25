@@ -49,7 +49,10 @@ final class WindowManager {
     var sceneFinishes: [UInt32: Int] = [:]
     var verified: Set<WindowID> = []
     var floatHidden: Set<WindowID> = []
-    var focused: WindowID?
+    var focused: WindowID? {
+        // A window's picture is freshest as you leave it, which beats capturing it every second while you work in it.
+        didSet { if let old = oldValue, old != focused, wins[old] != nil { refreshSnapshots([old]) } }
+    }
     // macOS echoes focus changes, sometimes late; while tegi moves focus, other echoes are stale.
     var pendingFocus: (id: WindowID?, until: Date)?
     var dragged: [WindowID: CGRect] = [:]

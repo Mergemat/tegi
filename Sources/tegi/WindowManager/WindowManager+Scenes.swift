@@ -22,9 +22,11 @@ extension WindowManager {
             let anyInput = CGEventType(rawValue: ~0)!
             guard !scenes.values.contains(where: \.isVisible),
                   CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: anyInput) < 30 else { return }
-            if freshTicks % 10 == 0 {
+            // Each capture costs the window server about the same whatever its size, so they're kept few:
+            // windows are also captured as focus leaves them, and the overview recaptures what it shows.
+            if freshTicks % 60 == 0 {
                 refreshSnapshots(targets.filter(\.value.visible).map(\.key) + floatersShowingEverywhere())
-            } else if freshTicks % 2 == 0, let id = focused {
+            } else if freshTicks % 10 == 0, let id = focused {
                 refreshSnapshots([id])
             }
             if freshTicks % 40 == 0 { refreshWallpapers() }
