@@ -47,9 +47,7 @@ final class WindowManager {
     var refusals: [WindowID: Refusal] = [:]
     var drift: [WindowID: Drift] = [:]
     var strays: [WindowID: DispatchWorkItem] = [:]
-    let keyHold = KeyHold()
-    var deferred: (id: WindowID, since: CFTimeInterval)?
-    var typing = false
+    var activating: (id: WindowID, since: CFTimeInterval)?
     var lastFocusMove = 0.0
     var leftBehind: Set<WindowID> = []
 
@@ -345,7 +343,6 @@ final class WindowManager {
             send(id: f.id, world.place(f.frame, on: f.monitor).frame, verify: f.last)
         }
         updateRing(at: now)
-        activateDeferred()
         if !motion.isMoving, let summary = motion.summary() {
             smoothness = summary
             onChange()
@@ -652,31 +649,17 @@ final class WindowManager {
         warpPointer(to: id)
     }
 
-    /// Bringing a window forward keeps its app, and the app losing focus, busy for tens of milliseconds, and their
-    /// windows can't move meanwhile; mid-slide that tears the strip apart. So while the strip moves, the window comes
-    /// forward once it has slowed down, and anything typed in between is held and replayed there.
+    /// One activation at a time: an app takes tens of milliseconds to come forward, so with keys held down the next one
+    /// goes straight to wherever focus is by then instead of working through a backlog. A hung app holds it up briefly.
     func activate(_ win: Win) {
-        if motion.isMoving, let keyHold {
-            if deferred == nil { deferred = (win.id, CACurrentMediaTime()) }
-            keyHold.hold()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in self?.activateDeferred(force: true) }
-            return
-        }
-        deferred = nil
-        win.worker.focus(win.element) { [weak self] in if self?.deferred == nil { self?.keyHold?.release() } }
-    }
-
-    /// Slow enough that a stall of an app's windows for tens of milliseconds moves them a few points at most; sooner
-    /// once you type, since then you're waiting on it.
-    func activateDeferred(force: Bool = false) {
-        guard let d = deferred else { return }
         let now = CACurrentMediaTime()
-        let speed = motion.isMoving ? motion.speed(at: now) : 0
-        guard force || speed < (typing ? 600 : 250) || now - d.since > 0.35 else { return }
-        deferred = nil
-        typing = false
-        guard let id = focused, let win = wins[id] else { return keyHold?.release() ?? () }
-        win.worker.focus(win.element) { [weak self] in if self?.deferred == nil { self?.keyHold?.release() } }
+        if let a = activating, now - a.since < 0.25 { return }
+        activating = (win.id, now)
+        win.worker.focus(win.element) { [weak self] in
+            guard let self else { return }
+            activating = nil
+            if let id = focused, id != win.id, let next = wins[id], !next.floating { activate(next) }
+        }
     }
 
     func expectFocus(_ id: WindowID?) {

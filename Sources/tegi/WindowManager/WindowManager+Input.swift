@@ -30,28 +30,14 @@ extension WindowManager {
         swipe = nil
         input?.stop()
         input = InputTap(modifier: config.swipeModifier) { [weak self] in self?.inputEvent($0) }
-        keyHold?.passing(config.binds.keys)
-        keyHold?.onTyping = { [weak self] in
-            self?.typing = true
-            self?.activateDeferred()
-        }
         multitouch?.shutdown()
         multitouch = config.threeFingerSwipe ? Multitouch { [weak self] in self?.touch($0) } : nil
         for m in monitors { NSEvent.removeMonitor(m) }
         monitors = [
             NSEvent.addGlobalMonitorForEvents(matching: .leftMouseUp) { [weak self] _ in self?.nativeDragEnded() },
-            NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in self?.clicked() },
+            NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in self?.pendingFocus = nil },
             NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved, .leftMouseDragged]) { [weak self] _ in self?.pointerMoved() },
         ].compactMap { $0 }
-    }
-
-    /// A click hands focus to whatever was clicked, so focus that was on its way elsewhere stops, and held typing goes on.
-    func clicked() {
-        pendingFocus = nil
-        guard deferred != nil else { return }
-        deferred = nil
-        typing = false
-        keyHold?.release()
     }
 
     var threeFingerConflict: Bool {

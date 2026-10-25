@@ -22,9 +22,6 @@ final class Motion: NSObject {
 
     func isFlying(_ id: WindowID) -> Bool { flights[id] != nil }
 
-    /// How fast the fastest window slides, in points a second.
-    func speed(at t: Double) -> Double { flights.values.map { abs($0.x.velocity(at: t)) }.max() ?? 0 }
-
     func current(_ id: WindowID, at t: Double) -> (frame: CGRect, monitor: Int)? {
         if let f = flights[id] { return (f.frame(at: t), f.monitor) }
         return resting[id]
