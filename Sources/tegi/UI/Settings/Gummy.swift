@@ -267,8 +267,9 @@ struct ValueChip: View {
         Text(text)
             .font(.system(size: 12, weight: .bold, design: .rounded).monospacedDigit())
             .foregroundStyle(t.valueText)
-            .padding(.horizontal, 9).padding(.vertical, 3)
-            .frame(minWidth: 46)
+            .padding(.vertical, 3)
+            // A fixed width, so the slider beside it holds still while the value changes.
+            .frame(width: 60)
             .background(t.value, in: Capsule())
     }
 }

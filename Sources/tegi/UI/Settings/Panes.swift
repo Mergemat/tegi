@@ -359,9 +359,9 @@ struct MotionPane: View {
         Card {
             ToggleRow(title: "Animations", detail: "Off, or with macOS's Reduce Motion, windows jump into place.",
                       key: ["animations"], isOn: a.on, on: ["on"], off: ["off"])
-            SliderRow(title: "Speed", detail: "Stretches every animation at once.", key: ["animation-slowdown"], value: -log2(a.slowdown),
-                      range: -2...2, step: 0.25, last: true, format: { "\(number(pow(2, $0)))×" },
-                      live: { $0.animations.slowdown = pow(2, -$1) }, write: { [number(pow(2, -$0))] })
+            SliderRow(title: "Speed", detail: "Stretches every animation at once.", key: ["animation-slowdown"], value: Double(speed(a.slowdown)),
+                      range: 0...Double(Self.speeds.count - 1), last: true, format: { "\(number(Self.speeds[Int($0)]))×" },
+                      live: { $0.animations.slowdown = 1 / Self.speeds[Int($1)] }, write: { [number(1 / Self.speeds[Int($0)])] })
         }
 
         CardTitle("Each animation")
@@ -372,6 +372,13 @@ struct MotionPane: View {
         }
         .opacity(a.on ? 1 : 0.5)
         .disabled(!a.on)
+    }
+
+    // Round numbers with normal in the middle; even steps on a log scale land on speeds like 0.8409×.
+    private static let speeds = [0.25, 0.5, 0.75, 1, 1.5, 2, 4]
+
+    private func speed(_ slowdown: Double) -> Int {
+        Self.speeds.indices.min { abs(log(Self.speeds[$0] * slowdown)) < abs(log(Self.speeds[$1] * slowdown)) }!
     }
 
     private func play(_ name: Animations.Name) {
