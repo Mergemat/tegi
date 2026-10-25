@@ -1,4 +1,4 @@
-<p align="center"><img src="Resources/brand/logo.png" width="180" alt=""></p>
+<p align="center"><img src="Resources/brand/app-icon.png" width="180" alt=""></p>
 
 # tegi
 
@@ -32,8 +32,8 @@ swift build                  # debug build
 swift test                   # layout, config and spring tests
 ./scripts/app.sh run         # build tegi.app, quit the running tegi, start the new one
 .build/release/tegi          # run in the terminal to see its output (permissions then go to the terminal)
-swift scripts/icon.swift     # redraw Resources/AppIcon.icns
-swift scripts/social.swift   # redraw the repository's social preview image
+./scripts/icon.sh            # rebuild Resources/AppIcon.icns from Resources/brand/app-icon.png
+swift scripts/social.swift   # redraw the sharing images, og.png and social.png
 ```
 
 - `Sources/TegiCore` is the layout model, config parser and springs: plain Swift with no macOS window APIs, so it's what the tests cover.

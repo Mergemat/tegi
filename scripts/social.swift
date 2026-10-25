@@ -1,51 +1,74 @@
-// Draws Resources/brand/social-preview.png, the 1280×640 image GitHub shows when the repository is shared.
+// Draws the sharing images from the artwork in Resources/brand:
+//   og.png      1280×640, GitHub's social preview (Settings → Social preview)
+//   social.png  1200×1200, for posting elsewhere
 // Run from the repository root: swift scripts/social.swift
 import AppKit
 
-let width = 1280, height = 640
-let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: width, pixelsHigh: height, bitsPerSample: 8,
-                           samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB,
-                           bytesPerRow: 0, bitsPerPixel: 0)!
-NSGraphicsContext.saveGraphicsState()
-NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
-let cg = NSGraphicsContext.current!.cgContext
-
-let gradient = CGGradient(colorsSpace: CGColorSpace(name: CGColorSpace.sRGB),
-                          colors: [CGColor(srgbRed: 0.13, green: 0.14, blue: 0.17, alpha: 1),
-                                   CGColor(srgbRed: 0.08, green: 0.085, blue: 0.1, alpha: 1)] as CFArray,
-                          locations: [0, 1])!
-cg.drawLinearGradient(gradient, start: CGPoint(x: 0, y: height), end: CGPoint(x: width, y: 0), options: [])
-
-// GitHub crops up to 40 pt from each edge, so everything sits inside that border.
-let logo = NSImage(contentsOfFile: "Resources/brand/logo.png")!
-logo.draw(in: CGRect(x: 163, y: 140, width: 360, height: 360))
+let brand = "Resources/brand/"
+let ink = NSColor(srgbRed: 0.96, green: 0.97, blue: 1, alpha: 1)
+let soft = NSColor(srgbRed: 0.72, green: 0.75, blue: 0.92, alpha: 1)
+let blue = NSColor(srgbRed: 0.5, green: 0.78, blue: 1, alpha: 1)
+let command = "brew install mergemat/tap/tegi"
 
 func rounded(_ size: CGFloat, _ weight: NSFont.Weight) -> NSFont {
     let base = NSFont.systemFont(ofSize: size, weight: weight)
     return NSFont(descriptor: base.fontDescriptor.withDesign(.rounded) ?? base.fontDescriptor, size: size) ?? base
 }
-func text(_ s: String, _ font: NSFont, _ color: NSColor, at point: CGPoint) {
-    NSAttributedString(string: s, attributes: [.font: font, .foregroundColor: color]).draw(at: point)
+
+func attributed(_ s: String, _ font: NSFont, _ color: NSColor) -> NSAttributedString {
+    NSAttributedString(string: s, attributes: [.font: font, .foregroundColor: color])
 }
 
-let left: CGFloat = 587
-text("tegi", rounded(132, .bold), NSColor(srgbRed: 0.95, green: 0.96, blue: 0.97, alpha: 1), at: CGPoint(x: left - 6, y: 334))
-text("Scrollable tiling for macOS", rounded(40, .medium), NSColor(srgbRed: 0.62, green: 0.65, blue: 0.72, alpha: 1),
-         at: CGPoint(x: left, y: 282))
+func render(_ name: String, width: Int, height: Int, draw: (CGContext) -> Void) {
+    let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: width, pixelsHigh: height, bitsPerSample: 8,
+                               samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB,
+                               bytesPerRow: 0, bitsPerPixel: 0)!
+    NSGraphicsContext.saveGraphicsState()
+    NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+    NSGraphicsContext.current!.imageInterpolation = .high
+    draw(NSGraphicsContext.current!.cgContext)
+    NSGraphicsContext.restoreGraphicsState()
+    try! rep.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: brand + name))
+    print("Wrote \(brand + name)")
+}
 
-let command = "brew install mergemat/tap/tegi"
-let mono = NSFont.monospacedSystemFont(ofSize: 26, weight: .medium)
-let size = NSAttributedString(string: command, attributes: [.font: mono]).size()
-let pill = CGRect(x: left, y: 178, width: size.width + 48, height: size.height + 28)
-cg.addPath(CGPath(roundedRect: pill, cornerWidth: 14, cornerHeight: 14, transform: nil))
-cg.setFillColor(CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 0.06))
-cg.fillPath()
-cg.addPath(CGPath(roundedRect: pill.insetBy(dx: 0.75, dy: 0.75), cornerWidth: 14, cornerHeight: 14, transform: nil))
-cg.setStrokeColor(CGColor(srgbRed: 0.5, green: 0.78, blue: 1, alpha: 0.45))
-cg.setLineWidth(1.5)
-cg.strokePath()
-text(command, mono, NSColor(srgbRed: 0.5, green: 0.78, blue: 1, alpha: 1), at: CGPoint(x: pill.minX + 24, y: pill.minY + 14))
+// The title, tagline and install command, stacked and aligned on x (or centered on it).
+func block(_ cg: CGContext, x: CGFloat, top: CGFloat, centered: Bool, scale: CGFloat) {
+    let title = attributed("tegi", rounded(140 * scale, .bold), ink)
+    let tagline = attributed("Scrollable tiling for macOS", rounded(38 * scale, .semibold), soft)
+    let code = attributed(command, NSFont.monospacedSystemFont(ofSize: 24 * scale, weight: .semibold), blue)
+    func left(_ w: CGFloat) -> CGFloat { centered ? x - w / 2 : x }
 
-NSGraphicsContext.restoreGraphicsState()
-try! rep.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: "Resources/brand/social-preview.png"))
-print("Wrote Resources/brand/social-preview.png")
+    var y = top - title.size().height
+    title.draw(at: CGPoint(x: left(title.size().width) - (centered ? 0 : 6 * scale), y: y))
+    y -= tagline.size().height + 2 * scale
+    tagline.draw(at: CGPoint(x: left(tagline.size().width), y: y))
+
+    let pad = CGSize(width: 22 * scale, height: 13 * scale)
+    let pill = CGRect(x: left(code.size().width + 2 * pad.width), y: y - 34 * scale - code.size().height - 2 * pad.height,
+                      width: code.size().width + 2 * pad.width, height: code.size().height + 2 * pad.height)
+    let shape = CGPath(roundedRect: pill, cornerWidth: pill.height / 2, cornerHeight: pill.height / 2, transform: nil)
+    cg.addPath(shape)
+    cg.setFillColor(CGColor(srgbRed: 0.06, green: 0.08, blue: 0.2, alpha: 0.55))
+    cg.fillPath()
+    cg.addPath(shape)
+    cg.setStrokeColor(blue.withAlphaComponent(0.5).cgColor)
+    cg.setLineWidth(1.5 * scale)
+    cg.strokePath()
+    code.draw(at: CGPoint(x: pill.minX + pad.width, y: pill.minY + pad.height))
+}
+
+// The landscape art is 3:2 with the characters on the left; cropping its middle band gives GitHub's 2:1.
+render("og.png", width: 1280, height: 640) { cg in
+    let art = NSImage(contentsOfFile: brand + "og-art.png")!.cgImage(forProposedRect: nil, context: nil, hints: nil)!
+    let band = art.cropping(to: CGRect(x: 0, y: art.height / 8, width: art.width, height: art.height * 3 / 4))!
+    cg.draw(band, in: CGRect(x: 0, y: 0, width: 1280, height: 640))
+    // GitHub crops up to 40 pt from each edge.
+    block(cg, x: 700, top: 500, centered: false, scale: 1)
+}
+
+render("social.png", width: 1200, height: 1200) { cg in
+    let art = NSImage(contentsOfFile: brand + "social-art.png")!.cgImage(forProposedRect: nil, context: nil, hints: nil)!
+    cg.draw(art, in: CGRect(x: 0, y: 0, width: 1200, height: 1200))
+    block(cg, x: 600, top: 420, centered: true, scale: 1.15)
+}
