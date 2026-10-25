@@ -148,44 +148,42 @@ struct SettingsView: View {
     }
 
     private func page(_ t: Theme) -> some View {
-        ZStack(alignment: .topTrailing) {
-            ZStack {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 0) {
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text(pane.title).font(.system(size: 24, weight: .bold, design: .rounded)).foregroundStyle(t.text)
-                            Text(pane.subtitle).font(.system(size: 12.5, design: .rounded)).foregroundStyle(t.secondary)
-                        }
-                        .padding(.horizontal, Space.page)
-                        .padding(.top, Space.page)
-                        .padding(.bottom, 18)
-                        if let problem = model.problem {
-                            Label("Your config has a problem — \(problem). Changes won't save until it's fixed.", systemImage: "exclamationmark.triangle.fill")
-                                .font(.system(size: 12, design: .rounded))
-                                .foregroundStyle(.orange)
-                                .padding(12)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .background(.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                                .padding(.horizontal, 16)
-                                .padding(.bottom, Space.between)
-                        }
-                        content
-                        Footer()
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                HStack(alignment: .center, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(pane.title).font(.system(size: 24, weight: .bold, design: .rounded)).foregroundStyle(t.text)
+                        Text(pane.subtitle).font(.system(size: 12.5, design: .rounded)).foregroundStyle(t.secondary)
                     }
+                    Spacer(minLength: 0)
+                    Peek(night: t.night, saves: model.saves).frame(width: 40, height: 48)
                 }
-                .scrollIndicators(.hidden)
-                .id(pane)
-                .transition(.asymmetric(insertion: .move(edge: forward ? .bottom : .top).combined(with: .opacity),
-                                        removal: .move(edge: forward ? .top : .bottom).combined(with: .opacity)))
+                .padding(.horizontal, Space.page)
+                .padding(.top, Space.page)
+                .padding(.bottom, 18)
+                if let problem = model.problem {
+                    Label("Your config has a problem — \(problem). Changes won't save until it's fixed.", systemImage: "exclamationmark.triangle.fill")
+                        .font(.system(size: 12, design: .rounded))
+                        .foregroundStyle(.orange)
+                        .padding(12)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, Space.between)
+                }
+                content
+                Footer()
             }
-            .background(t.page, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
-            .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 26, style: .continuous).strokeBorder(tegiBlue, lineWidth: 4).padding(-4))
-            .shadow(color: tegiBlue.opacity(t.night ? 0.45 : 0.55), radius: 14)
-            Peek(night: t.night, saves: model.saves)
-                .frame(width: 44, height: 54)
-                .offset(x: -30, y: -32)
         }
+        .scrollIndicators(.hidden)
+        .id(pane)
+        .transition(.asymmetric(insertion: .move(edge: forward ? .bottom : .top).combined(with: .opacity),
+                                removal: .move(edge: forward ? .top : .bottom).combined(with: .opacity)))
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(t.page, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).strokeBorder(t.edge))
+        .shadow(color: .black.opacity(t.night ? 0.3 : 0.08), radius: 16, y: 6)
     }
 
     @ViewBuilder private var content: some View {
@@ -239,7 +237,7 @@ struct RailItem: View {
     }
 }
 
-/// The mascot peeking over the page: asleep at night, and it perks up whenever a change is saved.
+/// The mascot by the page title: asleep at night, and it perks up whenever a change is saved.
 struct Peek: View {
     let night: Bool
     let saves: Int

@@ -96,10 +96,10 @@ struct LayoutPane: View {
 
         CardTitle("Screen edges")
         Card {
-            Row(title: "Keep clear", detail: "Room for a dock or a bar, in points.", last: true) {
+            Row(title: "Keep clear", detail: "Room for a dock or a bar, in points.", stacked: true, last: true) {
                 let s = [c.struts.left, c.struts.right, c.struts.top, c.struts.bottom]
-                HStack(spacing: 6) {
-                    ForEach(Array(["L", "R", "T", "B"].enumerated()), id: \.offset) { i, side in
+                HStack(spacing: 10) {
+                    ForEach(Array(["Left", "Right", "Top", "Bottom"].enumerated()), id: \.offset) { i, side in
                         PointsField(side: side, value: s[i]) { v in
                             var next = s
                             next[i] = v
@@ -121,21 +121,25 @@ struct PointsField: View {
 
     var body: some View {
         let t = Theme(scheme)
-        HStack(spacing: 4) {
-            Text(side).font(.system(size: 10.5, weight: .bold, design: .rounded)).foregroundStyle(t.faint)
-            TextField("", text: $text)
-                .textFieldStyle(.plain)
-                .font(.system(size: 12.5, weight: .semibold, design: .rounded).monospacedDigit())
-                .foregroundStyle(t.text)
-                .frame(width: 30)
-                .onAppear { text = number(value) }
-                .onChange(of: value) { text = number(value) }
-                .onSubmit {
-                    if let v = Double(text), (0...2000).contains(v) { commit(v) } else { text = number(value) }
-                }
+        VStack(spacing: 5) {
+            HStack(spacing: 3) {
+                TextField("", text: $text)
+                    .textFieldStyle(.plain)
+                    .multilineTextAlignment(.trailing)
+                    .font(.system(size: 12.5, weight: .semibold, design: .rounded).monospacedDigit())
+                    .foregroundStyle(t.text)
+                    .onAppear { text = number(value) }
+                    .onChange(of: value) { text = number(value) }
+                    .onSubmit {
+                        if let v = Double(text), (0...2000).contains(v) { commit(v) } else { text = number(value) }
+                    }
+                Text("pt").font(.system(size: 11, design: .rounded)).foregroundStyle(t.faint)
+            }
+            .padding(.horizontal, 12).padding(.vertical, 6)
+            .frame(width: 84)
+            .background(t.chip, in: Capsule())
+            Text(side).font(.system(size: 10.5, weight: .semibold, design: .rounded)).foregroundStyle(t.secondary)
         }
-        .padding(.horizontal, 10).padding(.vertical, 5)
-        .background(t.chip, in: Capsule())
     }
 }
 
