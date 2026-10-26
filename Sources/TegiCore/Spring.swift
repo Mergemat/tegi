@@ -13,6 +13,9 @@ public struct SpringParams: Equatable {
 
     public static let view = SpringParams()
     public static let workspace = SpringParams(stiffness: 1000)
+    /// Windows following fingers on the trackpad: about 15 ms behind, close enough to feel held, smoothing the steps
+    /// between touch frames.
+    public static let tracking = SpringParams(stiffness: 4500)
 
     var beta: Double { dampingRatio * stiffness.squareRoot() }
 }
@@ -91,8 +94,8 @@ public struct Spring: Equatable {
         return perScaledSecond / slowdown
     }
 
-    public func retargeted(to new: Double, at t: Double) -> Spring {
-        Spring(from: value(at: t), to: new, velocity: velocity(at: t), start: t, params: params, slowdown: slowdown)
+    public func retargeted(to new: Double, at t: Double, params: SpringParams? = nil) -> Spring {
+        Spring(from: value(at: t), to: new, velocity: velocity(at: t), start: t, params: params ?? self.params, slowdown: slowdown)
     }
 }
 
@@ -117,21 +120,21 @@ public struct RubberBand {
 }
 
 public struct SwipeTracker {
-    private var history: [(delta: Double, time: Double)] = []
+    private var history: [(position: Double, time: Double)] = []
     public private(set) var position = 0.0
 
     public init() {}
 
     public mutating func push(_ delta: Double, at time: Double) {
         if let last = history.last, time < last.time { return }
-        history.append((delta, time))
         position += delta
+        history.append((position, time))
         history.removeAll { $0.time + 0.15 < time }
     }
 
     public var velocity: Double {
         guard let first = history.first, let last = history.last, last.time > first.time else { return 0 }
-        return history.reduce(0) { $0 + $1.delta } / (last.time - first.time)
+        return (last.position - first.position) / (last.time - first.time)
     }
 
     public var projectedEnd: Double { position - velocity / (1000 * log(0.997)) }

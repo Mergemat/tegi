@@ -1,12 +1,12 @@
 import AppKit
+import TegiCore
 
 // MultitouchSupport is private: frames are validated and the reader shuts off on bad data.
 final class Multitouch {
     enum Event {
-        case began
+        case began(fingers: Int)
         case changed(dx: Double, dy: Double, time: Double)
         case ended(time: Double)
-        case fourFingerSwipe(up: Bool)
     }
 
     private typealias Callback = @convention(c) (OpaquePointer, UnsafeMutableRawPointer?, Int32, Double, Int32, UnsafeMutableRawPointer?) -> Int32
@@ -16,8 +16,8 @@ final class Multitouch {
     private typealias Register = @convention(c) (OpaquePointer, Callback, UnsafeMutableRawPointer?) -> Int32
     private typealias Unregister = @convention(c) (OpaquePointer, Callback) -> Int32
 
-    // Touch records are 96 bytes: state at 20 (4 = touching), x and y in 0...1 at 32 and 36.
-    private static let stride = 96, stateOffset = 20, xOffset = 32, yOffset = 36, touching: Int32 = 4
+    // Touch records are 96 bytes: the finger's id at 16, state at 20 (4 = touching), x and y in 0...1 at 32 and 36.
+    private static let stride = 96, idOffset = 16, stateOffset = 20, xOffset = 32, yOffset = 36, touching: Int32 = 4
 
     private let handler: (Event) -> Void
     private let natural: Bool
@@ -26,9 +26,9 @@ final class Multitouch {
     private let stop: Stop
     private let unregister: Unregister
     private let lock = NSLock()
-    private var last: CGPoint?
-    private var count = 0
-    private var four: (start: CGPoint, fired: Bool)?
+    private var gestures = TouchGestures()
+    /// The fingers making tegi's gesture, and how many it was decided as, or 0s; read from the event tap's thread.
+    var claim: (fingers: Int, decided: Int) { lock.withLock { (gestures.claimed, gestures.decided) } }
     private var bad = 0
     private(set) var dead = false
 
@@ -72,7 +72,7 @@ final class Multitouch {
     }
 
     private func frame(_ touches: UnsafeMutableRawPointer?, _ n: Int, _ time: Double) {
-        var sum = CGPoint.zero, touching = 0
+        var down: [TouchGestures.Touch] = []
         if let touches, n > 0, n <= 20 {
             for i in 0..<n {
                 let base = i * Self.stride
@@ -83,9 +83,7 @@ final class Multitouch {
                     lock.withLock { bad += 1 }
                     continue
                 }
-                sum.x += x
-                sum.y += y
-                touching += 1
+                down.append(.init(id: touches.load(fromByteOffset: base + Self.idOffset, as: Int32.self), x: x, y: y))
             }
         }
         lock.lock()
@@ -95,30 +93,14 @@ final class Multitouch {
             dead = true
             return
         }
-        let center = touching > 0 ? CGPoint(x: sum.x / Double(touching), y: sum.y / Double(touching)) : nil
         let sign = natural ? 1.0 : -1.0
-        if touching == 3, let center {
-            if count == 3, let last {
-                let dx = (center.x - last.x) * sign, dy = -(center.y - last.y) * sign
-                DispatchQueue.main.async { self.handler(.changed(dx: dx, dy: dy, time: time)) }
-            } else {
-                DispatchQueue.main.async { self.handler(.began) }
+        for event in gestures.frame(down) {
+            let out: Event = switch event {
+            case .began(let fingers): .began(fingers: fingers)
+            case .changed(let dx, let dy): .changed(dx: dx * sign, dy: -dy * sign, time: time)
+            case .ended: .ended(time: time)
             }
-            last = center
-        } else if count == 3 {
-            last = nil
-            DispatchQueue.main.async { self.handler(.ended(time: time)) }
+            DispatchQueue.main.async { self.handler(out) }
         }
-        if touching == 4, let center {
-            if four == nil { four = (center, false) }
-            if let f = four, !f.fired, abs(center.y - f.start.y) > 0.12 {
-                four?.fired = true
-                let up = (center.y > f.start.y) == natural
-                DispatchQueue.main.async { self.handler(.fourFingerSwipe(up: up)) }
-            }
-        } else if touching < 4 {
-            four = nil
-        }
-        count = touching
     }
 }

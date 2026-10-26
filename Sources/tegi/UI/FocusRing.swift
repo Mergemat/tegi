@@ -57,6 +57,14 @@ final class FocusRing {
     private var hintBelow: CGWindowID = 0
     private var tabPanels: [TabPanel] = []
 
+    func frame(on display: UInt32) -> CGRect? {
+        guard let drawn = overlays[display]?.last, let screen = screen(display),
+              let top = NSScreen.screens.first?.frame.height else { return nil }
+        let rect = drawn.frame.insetBy(dx: drawn.width, dy: drawn.width)
+        return CGRect(x: screen.frame.minX + rect.minX, y: top - screen.frame.minY - rect.maxY,
+                      width: rect.width, height: rect.height)
+    }
+
     func update(_ targets: [Target], tabs: [Tabs], config: Config) {
         let wanted = Set(targets.map(\.display))
         for (id, overlay) in overlays where !wanted.contains(id) {

@@ -69,6 +69,9 @@ public struct WindowRule: Equatable {
         return true
     }
 
+    /// A tile rule means an app's windows, not its menus, popovers and dialogs.
+    public func floats(tileable: Bool, popup: Bool) -> Bool { popup || (floating ?? !tileable) }
+
     mutating func merge(_ o: WindowRule) {
         floating = o.floating ?? floating
         width = o.width ?? width

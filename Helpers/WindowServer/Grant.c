@@ -5,9 +5,7 @@
 #include <mach-o/dyld.h>
 #include <mach-o/nlist.h>
 #include <CoreGraphics/CoreGraphics.h>
-#ifdef __arm64__
 #include <ptrauth.h>
-#endif
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -60,9 +58,7 @@ static void *local_symbol(const char *name) {
         for (uint32_t j = 0; j < symtab->nsyms; ++j) {
             if (symbols[j].n_un.n_strx < symtab->strsize && !strcmp(strings + symbols[j].n_un.n_strx, name)) {
                 void *pointer = (void *)(symbols[j].n_value + slide);
-#ifdef __arm64__
                 pointer = ptrauth_sign_unauthenticated(pointer, ptrauth_key_function_pointer, 0);
-#endif
                 return pointer;
             }
         }

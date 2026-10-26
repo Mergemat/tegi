@@ -9,6 +9,7 @@ cask "tegi" do
   desc "Scrollable tiling window manager"
   homepage "https://github.com/Mergemat/tegi"
 
+  depends_on arch: :arm64
   depends_on macos: :sonoma
 
   app "tegi.app"
@@ -22,7 +23,9 @@ cask "tegi" do
     run "/usr/bin/open", args: ["{{appdir}}/tegi.app"], must_succeed: false
   end
 
-  uninstall quit: "io.github.mergemat.tegi"
+  # Direct motion's passwordless Dock helper, if it was ever turned on.
+  uninstall quit:   "io.github.mergemat.tegi",
+            delete: ["/Library/PrivilegedHelperTools/tegi-dock-loader", "/etc/sudoers.d/tegi"]
 
   zap trash: "~/.config/tegi"
 

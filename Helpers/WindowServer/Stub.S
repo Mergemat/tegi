@@ -1,4 +1,3 @@
-#if defined(__arm64__)
 .text
 .p2align 3
 .globl _tegi_stub_start, _tegi_stub_end, _tegi_stub_pthread, _tegi_stub_dlopen, _tegi_stub_dlsym, _tegi_stub_dlclose, _tegi_stub_path
@@ -44,50 +43,3 @@ _tegi_stub_dlsym: .quad 0
 _tegi_stub_dlclose: .quad 0
 _tegi_stub_path: .space 1024
 _tegi_stub_end:
-#elif defined(__x86_64__)
-.text
-.p2align 3
-.globl _tegi_stub_start, _tegi_stub_end, _tegi_stub_pthread, _tegi_stub_dlopen, _tegi_stub_dlsym, _tegi_stub_dlclose, _tegi_stub_path
-_tegi_stub_start:
-    pushq %rbp
-    movq %rsp, %rbp
-    subq $16, %rsp
-    leaq -8(%rbp), %rdi
-    xorl %esi, %esi
-    leaq worker(%rip), %rdx
-    xorl %ecx, %ecx
-    callq *_tegi_stub_pthread(%rip)
-1:  jmp 1b
-worker:
-    pushq %rbp
-    movq %rsp, %rbp
-    pushq %rbx
-    subq $8, %rsp
-    leaq _tegi_stub_path(%rip), %rdi
-    movl $2, %esi
-    callq *_tegi_stub_dlopen(%rip)
-    testq %rax, %rax
-    jz 2f
-    movq %rax, %rbx
-    movq %rax, %rdi
-    leaq grant_name(%rip), %rsi
-    callq *_tegi_stub_dlsym(%rip)
-    testq %rax, %rax
-    jz 3f
-    callq *%rax
-3:  movq %rbx, %rdi
-    callq *_tegi_stub_dlclose(%rip)
-2:  xorl %eax, %eax
-    addq $8, %rsp
-    popq %rbx
-    popq %rbp
-    retq
-grant_name: .asciz "tegi_grant"
-.p2align 3
-_tegi_stub_pthread: .quad 0
-_tegi_stub_dlopen: .quad 0
-_tegi_stub_dlsym: .quad 0
-_tegi_stub_dlclose: .quad 0
-_tegi_stub_path: .space 1024
-_tegi_stub_end:
-#endif

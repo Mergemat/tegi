@@ -8,11 +8,31 @@ private func _AXUIElementGetWindow(_ element: AXUIElement, _ id: UnsafeMutablePo
 struct WindowInfo {
     var windowID: CGWindowID
     var tileable: Bool
+    /// A menu, popover or dialog: at a menu's level, or not what macOS calls a standard window.
+    var popup: Bool
     var floatable: Bool
     var minimized: Bool
     var fullscreen: Bool
     var frame: CGRect?
     var title: String
+}
+
+/// One window as the window server lists it.
+func windowDescription(_ id: CGWindowID) -> [String: Any]? {
+    // The window server wants raw window numbers, not CFNumbers.
+    var ids = [UnsafeRawPointer(bitPattern: UInt(id))]
+    guard let array = CFArrayCreate(nil, &ids, 1, nil) else { return nil }
+    return (CGWindowListCreateDescriptionFromArray(array) as? [[String: Any]])?.first
+}
+
+/// Where the window server has a window, which an app or a move another process made may not have told AX.
+func windowBounds(_ id: CGWindowID) -> CGRect? {
+    (windowDescription(id)?[kCGWindowBounds as String] as! CFDictionary?).flatMap { CGRect(dictionaryRepresentation: $0) }
+}
+
+/// At a menu's level or above.
+func isPopup(_ id: CGWindowID) -> Bool {
+    (windowDescription(id)?[kCGWindowLayer as String] as? Int ?? 0) >= Int(CGWindowLevelForKey(.popUpMenuWindow))
 }
 
 extension AXUIElement {
@@ -52,6 +72,8 @@ extension AXUIElement {
         return WindowInfo(
             windowID: windowID,
             tileable: ok(values[1]) as? String == kAXStandardWindowSubrole && ok(values[2]) != nil,
+            // Telegram's menus start at the normal level and only rise once shown, but are dialogs from the start.
+            popup: ok(values[1]) as? String != kAXStandardWindowSubrole || isPopup(windowID),
             floatable: [kAXStandardWindowSubrole, kAXDialogSubrole, kAXSystemDialogSubrole, kAXFloatingWindowSubrole]
                 .contains(ok(values[1]) as? String ?? "") && (frame.map { $0.width >= 100 && $0.height >= 60 } ?? false),
             minimized: ok(values[3]) as? Bool ?? false,

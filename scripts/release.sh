@@ -18,7 +18,7 @@ esac
 [ -z "$(git status --porcelain)" ] || { echo "commit or stash changes first" >&2; exit 1; }
 swift test
 
-VERSION=$version UNIVERSAL=1 ./scripts/app.sh
+VERSION=$version ./scripts/app.sh
 
 dist=.build/dist
 zip=$dist/tegi-$version.zip

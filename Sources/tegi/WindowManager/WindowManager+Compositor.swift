@@ -2,75 +2,117 @@ import AppKit
 import QuartzCore
 import TegiCore
 
-/// WindowServer motion: the compositor moves windows every frame; this side keeps Accessibility's idea of each window,
-/// and what tegi has asked of it, in step. A window changing size is moved and resized by its app, as in standard
-/// motion: only the app can redraw at a new size, and a position from elsewhere would fight the one it applies.
 extension WindowManager {
     func startCompositor() {
+        compositor.onCommit = { [weak self] settled in self?.presentationCommitted(settled: settled) }
         windowServer.onRefused = { [weak self] in
             guard let self else { return }
             finishServerMotion()
-            onChange()
+            serverBackendChanged()
         }
         motion.onFlights = { [weak self] flights in
             guard let self, windowServer.active else { return }
-            let sized = appSized
-            compositor.fly(flights.filter { !sized.contains($0.key) })
+            compositor.fly(flights)
         }
     }
 
-    /// What the compositor presents from: the layout, and which windows it may move.
     func updateCompositor() {
-        guard windowServer.active else { return }
-        compositor.update(world: world, windows: Dictionary(uniqueKeysWithValues: wins.values.filter { $0.windowID != 0 }.map { ($0.id, $0.windowID) }))
+        guard !paused, windowServer.active else { return }
+        let managed = wins.values.filter {
+            $0.windowID != 0 && !$0.fullScreen && !$0.suspended && !nativeMoving.contains($0.id)
+        }
+        compositor.update(world: world, windows: Dictionary(uniqueKeysWithValues: managed.map { ($0.id, $0.windowID) }), excluded: Set(wins.values.filter {
+            $0.fullScreen || $0.suspended || nativeMoving.contains($0.id)
+        }.map(\.windowID)), clips: Dictionary(uniqueKeysWithValues: managed.map { ($0.windowID, serverClip($0.id)) }))
     }
 
-    /// A window put somewhere directly, or landing from a flight the compositor already presented.
+    func familyChanged() {
+        updateCompositor()
+        presentationCommitted(settled: !motion.isMoving)
+    }
+
+    func serverClip(_ id: WindowID) -> CGRect {
+        if let win = wins[id], win.floating {
+            guard let m = floatMonitor(win), world.monitors.indices.contains(m),
+                  win.floatHome == activeWorkspaceID(on: m) else { return .zero }
+            return world.monitors[m].screen
+        }
+        guard let location = world.locate(id), world.monitors.indices.contains(location.monitor) else { return .zero }
+        let mon = world.monitors[location.monitor]
+        let ws = mon.workspaces[location.workspace]
+        let column = ws.columns[location.column]
+        guard location.workspace == mon.active, !column.tabbed || column.activeWindow == id else { return .zero }
+        return mon.screen
+    }
+
+    /// App geometry can change under locked bounds without moving or resizing the displayed window.
     func sendThroughServer(_ id: WindowID, _ frame: CGRect, verify: Bool) {
         guard let win = wins[id] else { return }
         let before = applied[id]
-        let resize = before?.size != frame.size
-        let changed = before != frame
-        guard changed || resize || verify && serverUnsynced.contains(id) else { return }
+        let clip = serverClip(id)
+        if before?.size != frame.size { verified.remove(id) }
         applied[id] = frame
         updateLiveFloating(win)
-        serverUnsynced.insert(id)
-        compositor.place(id, at: frame.origin)
+        compositor.place(id, frame: frame, clip: clip)
         sentSomething = true
-        if changed {
-            generation[id, default: 0] += 1
-            unlanded.remove(id)
-            win.worker.cancelPosition(id)
-            motion.sent(id, app: win.worker.name)
-            motion.landed(id)
+        if before != frame { serverUnsynced.insert(id) }
+        // Hidden and partly exposed windows keep their logical position on a display, where AppKit can resize them.
+        // Their presentation is independent, so neither clamping nor a late AX answer can expose a correction.
+        let landing = verify && swipe?.axis != .horizontal && world.monitors.contains { $0.screen.contains(frame) } && !clip.isEmpty
+        if landing {
+            sendAccessibility(id, frame, verify: !verified.contains(id), force: serverUnsynced.contains(id))
+        } else if before?.size != frame.size {
+            requestSize(id, frame)
         }
-        // Apps clamp parked and partly off-screen windows back onto a display when AX is told
-        // their position. Keep those in compositor coordinates until they're fully exposed.
-        let landing = verify && !unlanded.contains(id) && swipe?.axis != .horizontal && world.monitors.contains(where: { $0.screen.contains(frame) })
-        if resize {
-            verified.remove(id)
-            if !landing { requestSize(id, frame.size, at: frame.origin) }
-        }
-        // What the app refuses is measured once the window is where it belongs.
-        if landing { sendAccessibility(id, frame, verify: !verified.contains(id), force: true) }
     }
 
-    /// A size for a window parked or on its way. AppKit applies a size where the app last heard its window was, which
-    /// compositor moves never tell it, so a window at rest has the app hear `origin`, where the compositor has it,
-    /// first. One in flight gets the size alone: a place would pull it back for a frame. Either way, an app that
-    /// nudges the window is put back once it's done.
-    func requestSize(_ id: WindowID, _ size: CGSize, at origin: CGPoint?) {
+    func requestSize(_ id: WindowID, _ frame: CGRect) {
         guard let win = wins[id] else { return }
-        win.worker.apply(id, win.element, CGRect(origin: origin ?? .zero, size: size), resize: true, position: origin != nil,
-                         placed: true, measured: { _, _ in }, done: { [weak self] in self?.compositor.reassert(id) })
+        let size = frame.size
+        var content = frame
+        if let m = world.locate(id)?.monitor ?? floatMonitor(win), world.monitors.indices.contains(m) {
+            let mon = world.monitors[m]
+            if !mon.screen.contains(content) { content.origin = mon.area.origin }
+        }
+        verified.remove(id)
+        serverUnsynced.insert(id)
+        // A bottom tile cannot grow to full height at its old native origin: macOS clamps it to the screen edge.
+        // Locked bounds keep the visible flight in place while the app moves first and lays out its destination size.
+        win.worker.apply(id, win.element, content, resize: true, placed: true,
+                         measured: { [weak self] id, actual in
+            guard let self, wins[id] != nil else { return }
+            let wanted = motion.isFlying(id) ? targets[id]?.strip?.size : applied[id]?.size
+            guard wanted == size else { return }
+            sizeAnswered(id, asked: size, actual: actual)
+        }, done: { [weak self] in self?.contentAnswered(id) })
     }
 
-    func finishServerMotion() {
-        compositor.endAll()
-        for id in serverUnsynced {
-            guard let frame = applied[id] else { continue }
+    func contentAnswered(_ id: WindowID) {
+        guard !paused, windowServer.active, let win = wins[id] else { return }
+        windowServer.refreshContent(of: win.windowID)
+        presentationCommitted(settled: true)
+    }
+
+    func presentationCommitted(settled: Bool) {
+        guard !paused, windowServer.active else { return }
+        updateRing(at: motion.clock)
+        guard settled else { return }
+        for (m, mon) in world.monitors.enumerated() where scenes[mon.id]?.isVisible == true {
+            scenes[mon.id]?.update(sceneContent(m, current: true))
+        }
+        onChange()
+    }
+
+    func finishServerMotion(restoring restored: [WindowID: CGRect] = [:]) {
+        for id in serverUnsynced.union(restored.keys) {
+            guard let frame = restored[id] ?? applied[id] else { continue }
             sendAccessibility(id, frame, verify: true, force: true)
         }
+        // Keep the server's presentation until native geometry is ready to be shown again.
+        let group = DispatchGroup()
+        for worker in workers.values { worker.flush(group) }
+        _ = group.wait(timeout: .now() + 2)
+        compositor.endAll()
         serverUnsynced = []
     }
 
@@ -82,7 +124,6 @@ extension WindowManager {
     }
 
     func serverBackendChanged() {
-        // Granted mid-flight: what Motion is flying is the compositor's from here.
         if windowServer.active, !serverScenesLive {
             updateCompositor()
             motion.republish()
@@ -92,6 +133,8 @@ extension WindowManager {
             let open = overview
             overview = false
             rebuildScenes()
+            applied = [:]
+            relayout()
             if open { setOverview(true) }
         }
         onChange()
@@ -105,20 +148,18 @@ extension WindowManager {
         scenes[mon.id]?.setFrames([win.id: frame.offsetBy(dx: -mon.area.minX, dy: -mon.area.minY)])
     }
 
-    /// A window's size as the window server has it is the truth the ring and overview follow. An app that resized itself,
-    /// often restoring a saved frame after it opens, is told the layout's size once more; one that keeps another size
-    /// after being told is refusing it, and is left be until the layout asks for something else.
     func sizeChanged(_ id: WindowID) {
-        guard let win = wins[id], !win.floating, !win.suspended, win.windowID != 0, let laidOut = applied[id],
-              !motion.isFlying(id), let real = onScreen(win.windowID)?.size else { return }
+        guard !paused, let win = wins[id], !win.floating, !win.suspended, !win.fullScreen, win.windowID != 0, let laidOut = applied[id],
+              !motion.isFlying(id), let real = (windowServer.active ? windowServer.contentBounds(of: win.windowID) : onScreen(win.windowID))?.size else { return }
         let off = abs(real.width - laidOut.width) > 1 || abs(real.height - laidOut.height) > 1
+        if let limit = world.heightLimit(for: id), real.height < limit.height - 1,
+           world.observeSize(real, asked: laidOut.size, for: id) { return relayout() }
         refusals[id] = off ? Refusal(asked: laidOut.size, got: real) : nil
         if !off { forced[id] = nil }
         updateRing(at: motion.clock)
-        // While tegi's own ask is out, a new size is the app's answer to it.
         guard off, !unlanded.contains(id), forced[id] != laidOut.size else { return }
         forced[id] = laidOut.size
-        if windowServer.active { requestSize(id, laidOut.size, at: laidOut.origin) }
+        if windowServer.active { requestSize(id, laidOut) }
         else { sendAccessibility(id, laidOut, verify: true, force: true) }
     }
 }

@@ -55,16 +55,30 @@ final class Snapshots {
         return surface
     }
 
+    /// Captures can be GPU-only or use a different pixel layout despite the requested format.
+    static func readable(_ surface: IOSurface) -> Bool {
+        surface.pixelFormat == kCVPixelFormatType_32BGRA && surface.width > 0 && surface.height > 0
+            && surface.width <= surface.bytesPerRow / 4 && surface.bytesPerRow <= surface.allocationSize / surface.height
+            && Int(bitPattern: surface.baseAddress) != 0
+    }
+
+    static func measure(_ image: CGImage) -> (radius: Double?, blank: Bool) {
+        let w = image.width, h = image.height
+        guard let context = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
+                                      space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+        else { return (nil, false) }
+        context.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
+        guard let data = context.data else { return (nil, false) }
+        let base = data.assumingMemoryBound(to: UInt8.self)
+        let alpha = { (x: Int, y: Int) in base[(y * w + x) * 4 + 3] }
+        return (Corners.radius(width: w, height: h, alpha: alpha), Corners.isBlank(width: w, height: h, alpha: alpha))
+    }
+
     static func measure(_ surface: IOSurface) -> (radius: Double?, blank: Bool) {
         guard surface.lock(options: .readOnly, seed: nil) == KERN_SUCCESS else { return (nil, false) }
         defer { surface.unlock(options: .readOnly, seed: nil) }
-        // Captures can be GPU-only or use a different pixel layout despite the requested format.
         // An unreadable surface says nothing about whether the source window is invisible.
-        guard surface.pixelFormat == kCVPixelFormatType_32BGRA,
-              surface.width > 0, surface.height > 0,
-              surface.width <= surface.bytesPerRow / 4,
-              surface.bytesPerRow <= surface.allocationSize / surface.height,
-              Int(bitPattern: surface.baseAddress) != 0 else { return (nil, false) }
+        guard readable(surface) else { return (nil, false) }
         let base = surface.baseAddress.assumingMemoryBound(to: UInt8.self), row = surface.bytesPerRow
         let alpha = { (x: Int, y: Int) in base[y * row + x * 4 + 3] }
         return (Corners.radius(width: surface.width, height: surface.height, alpha: alpha),
@@ -136,8 +150,15 @@ final class Snapshots {
                         config.height = Int(window.frame.height * scale)
                         config.showsCursor = false
                         config.ignoreShadowsSingleWindow = true
-                        let surface = await Self.surface(SCContentFilter(desktopIndependentWindow: window), config, space)
-                        let measured = surface.map(Self.measure)
+                        let filter = SCContentFilter(desktopIndependentWindow: window)
+                        let surface = await Self.surface(filter, config, space)
+                        var measured = surface.map(Self.measure)
+                        // Windows the app draws on the GPU come back GPU-only, with no pixels to read; a picture of
+                        // one has them.
+                        if let surface, !Self.readable(surface),
+                           let image = try? await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config) {
+                            measured = Self.measure(image)
+                        }
                         return (w.id, surface, measured?.radius.map { $0 / scale }, measured?.blank ?? false)
                     }
                 }

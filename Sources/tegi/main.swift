@@ -50,6 +50,11 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         welcome.onRestart = { [weak self] in self?.relaunch() }
         if WelcomeWindow.needed { welcome.show() }
+        // Turned off while tegi wasn't running, perhaps with Accessibility taken away since.
+        if let text = try? String(contentsOf: configURL, encoding: .utf8), let config = try? Config.parse(text),
+           !config.animations.windowServer {
+            WindowServer.forget(asking: false)
+        }
         startWhenTrusted()
     }
 

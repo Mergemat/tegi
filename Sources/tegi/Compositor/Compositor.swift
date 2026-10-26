@@ -2,9 +2,7 @@ import AppKit
 import QuartzCore
 import TegiCore
 
-/// Moves windows on a thread of its own, from the display's frame clock: each frame, every moving window's position goes
-/// to the window server in one transaction. The main thread decides where windows go; nothing it does, from layout to
-/// a slow app's Accessibility answer, can make a frame late. Sizes stay with the apps, which alone can redraw at one.
+/// Publishes window presentations together on the display clock. App geometry updates cannot advance the animation.
 final class Compositor: NSObject {
     private let server: WindowServer
     private let lock = NSLock()
@@ -14,11 +12,13 @@ final class Compositor: NSObject {
     private var world = World(monitors: [])
     private var windows: [WindowID: CGWindowID] = [:]
     private var flights: [WindowID: Flight] = [:]
-    private var moves: [CGWindowID: CGPoint] = [:]
-    /// Where each window was last put, so a late Accessibility write that pulled it elsewhere can be undone.
-    private var origins: [WindowID: CGPoint] = [:]
+    private var moves: [CGWindowID: WindowServer.Presentation] = [:]
+    private var shown: [WindowID: WindowServer.Presentation] = [:]
     private var lastFrame: CFTimeInterval?
     private var presented = 0, missed = 0
+    private var notifying = false
+    private var committedIdle = true
+    var onCommit: (Bool) -> Void = { _ in }
     /// Frames presented while something moved, and how many came a vsync or more late.
     var frames: (presented: Int, missed: Int) { lock.withLock { (presented, missed) } }
 
@@ -47,8 +47,12 @@ final class Compositor: NSObject {
 
     // MARK: Main thread
 
-    func update(world: World, windows: [WindowID: CGWindowID]) {
+    func update(world: World, windows: [WindowID: CGWindowID], excluded: Set<CGWindowID> = [], clips: [CGWindowID: CGRect] = [:]) {
         lock.withLock {
+            server.manage(Set(windows.values), excluding: excluded, clips: clips)
+            let removed = Set(self.windows.keys).subtracting(windows.keys)
+            for id in removed { shown[id] = nil; flights[id] = nil }
+            moves = moves.filter { windows.values.contains($0.key) }
             self.world = world
             self.windows = windows
         }
@@ -60,39 +64,38 @@ final class Compositor: NSObject {
         wake()
     }
 
-    /// A one-off move, presented with the next frame.
-    func place(_ id: WindowID, at origin: CGPoint) {
+    /// An explicit clip separates an inactive workspace from a window just beyond its display's edge.
+    func place(_ id: WindowID, frame: CGRect, clip: CGRect?) {
         lock.withLock {
             guard let window = windows[id] else { return }
-            origins[id] = origin
-            moves[window] = origin
+            let presentation = WindowServer.Presentation(frame: frame, clip: clip)
+            shown[id] = presentation
+            moves[window] = presentation
         }
         wake()
-    }
-
-    /// An app moved its window, or finished an Accessibility write that landed after the compositor moved it on.
-    func reassert(_ id: WindowID) {
-        lock.withLock {
-            guard let window = windows[id], flights[id] == nil, let origin = origins[id] else { return }
-            moves[window] = origin
-        }
-        wake()
-    }
-
-    /// The app put its window here itself, as it does while it resizes.
-    func settled(_ id: WindowID, at origin: CGPoint) {
-        lock.withLock { origins[id] = origin }
     }
 
     func endAll() {
         lock.withLock {
             flights = [:]
             moves = [:]
+            shown = [:]
+            server.releaseAll()
         }
     }
 
-    /// Where the compositor last put a window, for `tegi msg state`.
-    func origin(of id: WindowID) -> CGPoint? { lock.withLock { origins[id] } }
+    func release(_ id: WindowID) {
+        lock.withLock {
+            shown[id] = nil
+            flights[id] = nil
+            if let window = windows.removeValue(forKey: id) {
+                moves[window] = nil
+                server.release([window])
+            }
+        }
+    }
+
+    func origin(of id: WindowID) -> CGPoint? { lock.withLock { shown[id]?.frame.origin } }
 
     // MARK: Compositor thread
 
@@ -126,16 +129,29 @@ final class Compositor: NSObject {
         for (id, flight) in flights {
             guard let window = windows[id], world.monitors.indices.contains(flight.monitor) else { continue }
             let done = flight.isDone(at: t)
-            let screen = world.place((done ? flight.target : flight.frame(at: t)).roundedToPoints, on: flight.monitor).frame
-            if origins[id] != screen.origin {
-                batch[window] = screen.origin
-                origins[id] = screen.origin
+            let frame = (done ? flight.target : flight.frame(at: t)).roundedToPoints
+            let presentation = WindowServer.Presentation(frame: frame, clip: world.monitors[flight.monitor].screen, resizeTo: done ? nil : flight.target.size)
+            if shown[id] != presentation {
+                batch[window] = presentation
+                shown[id] = presentation
             }
             if done { flights[id] = nil }
         }
         if !batch.isEmpty { server.submit(batch) }
         let idle = flights.isEmpty && moves.isEmpty
+        var notify = false
+        if !batch.isEmpty {
+            committedIdle = idle
+            if !notifying { notifying = true; notify = true }
+        }
         lock.unlock()
+        if notify {
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                let idle = self.lock.withLock { self.notifying = false; return self.committedIdle }
+                onCommit(idle)
+            }
+        }
         return idle
     }
 }

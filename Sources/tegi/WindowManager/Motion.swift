@@ -34,9 +34,14 @@ final class Motion: NSObject {
               springs: Springs) -> Bool {
         if var f = flights[id] {
             if f.target != to { f.retarget(to: to, at: t) }
+            // Fingers taking over a window still on its way, or letting it go, bring their own spring.
+            if f.x.params != springs.position {
+                f.x = f.x.retargeted(to: to.minX, at: t, params: springs.position)
+                f.y = f.y.retargeted(to: to.minY, at: t, params: springs.position)
+            }
             if let velocity {
                 f.x = Spring(from: f.x.value(at: t), to: to.minX, velocity: velocity, start: t,
-                             params: f.x.params, slowdown: f.x.slowdown)
+                             params: springs.position, slowdown: f.x.slowdown)
             }
             flights[id] = f
             onFlights(flights)

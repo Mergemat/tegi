@@ -51,7 +51,9 @@ extension WindowManager {
                 if was?.id != now.id || overview { scene.slide(to: mon.active, velocity: slideVelocity) }
                 continue
             }
-            guard let was, was.id != now.id, animate, config.animations.spring(.workspaceSwitch) != nil,
+            // A full-screen window's workspace is its Space: macOS animates going there or back, once, so tegi doesn't.
+            let spaces = [was?.id, now.id].contains { id in mon.workspaces.first { $0.id == id }.map(holdsFullScreen) ?? false }
+            guard let was, was.id != now.id, animate, !spaces, config.animations.spring(.workspaceSwitch) != nil,
                   snapshots.allowed || windowServer.liveScenes, let scene = scene(for: m) else { continue }
             var content = sceneContent(m, current: windowServer.liveScenes)
             var from = Double(was.index), to = mon.active
@@ -71,7 +73,12 @@ extension WindowManager {
         }
     }
 
-    func setOverview(_ open: Bool, focusing picked: WindowID? = nil) {
+    func holdsFullScreen(_ ws: Workspace) -> Bool {
+        ws.columns.contains { $0.tiles.contains { wins[$0.id]?.fullScreen == true } }
+    }
+
+    /// `velocity`: how fast it was already opening, per second, from fingers let go mid-gesture.
+    func setOverview(_ open: Bool, focusing picked: WindowID? = nil, velocity: Double? = nil) {
         guard open != overview else { return }
         overview = open
         if open {
@@ -81,13 +88,17 @@ extension WindowManager {
                 let content = sceneContent(m, current: windowServer.liveScenes)
                 if !scene.isVisible { scene.show(content, at: Double(mon.active)) }
                 scene.setNames(workspaceNames(m))
-                scene.openOverview(needsAccess: !snapshots.allowed && !windowServer.liveScenes)
+                scene.openOverview(needsAccess: !snapshots.allowed && !windowServer.liveScenes,
+                                   velocity: velocity.map(scene.zoomVelocity(opening:)))
                 scene.update(content)
                 refreshSnapshots(content.flatMap { $0.map(\.id) })
             }
             updateRing(at: CACurrentMediaTime())
         } else {
-            for mon in world.monitors { scenes[mon.id]?.closeOverview(at: mon.active) }
+            for mon in world.monitors {
+                guard let scene = scenes[mon.id] else { continue }
+                scene.closeOverview(at: mon.active, velocity: velocity.map(scene.zoomVelocity(opening:)))
+            }
             if let picked {
                 focusWindow(picked)
             } else if let id = focused, floatersShowing(on: world.focusedMonitor).contains(id) {
@@ -189,17 +200,26 @@ extension WindowManager {
             let ringed = w == mon.active && !ws.columns.isEmpty && !ws.columns[ws.active].fullscreen
             var windows = world.stripFrames(monitor: m, workspace: w, config: config).map { f in
                 var frame = f.frame
-                if current, motion.isFlying(f.id), self.homes[f.id] == ws.id,
-                   let shown = motion.current(f.id, at: motion.clock), shown.monitor == m {
-                    frame = shown.frame.roundedToPoints.offsetBy(dx: -mon.area.minX, dy: -mon.area.minY)
+                let presented = wins[f.id].flatMap { windowServer.presentation(of: $0.windowID)?.frame }
+                if let presented { frame.size = presented.size }
+                if current, motion.isFlying(f.id), self.homes[f.id] == ws.id {
+                    if let presented {
+                        frame = presented.offsetBy(dx: -mon.area.minX, dy: -mon.area.minY)
+                    } else if let shown = motion.current(f.id, at: motion.clock), shown.monitor == m {
+                        frame = shown.frame.roundedToPoints.offsetBy(dx: -mon.area.minX, dy: -mon.area.minY)
+                    }
                 }
-                return Scene.Window(id: f.id, frame: refusals[f.id]?.apply(to: frame) ?? frame, ring: f.active && ringed ? ring : nil, radius: cornerRadius(f.id), floating: false,
+                let shown = presented == nil ? refusals[f.id]?.apply(to: frame) ?? frame : frame
+                return Scene.Window(id: f.id, frame: shown, ring: f.active && ringed ? ring : nil, radius: cornerRadius(f.id), floating: false,
                              depth: depth(f.id), image: snapshots.images[f.id], icon: wins[f.id]?.worker.icon,
                              liveWindow: windowServer.liveScenes ? wins[f.id]?.windowID : nil)
             }
             let id = mon.workspaces[w].id
             for win in wins.values where win.floating && !win.suspended && win.floatHome == id && !snapshots.blank.contains(win.id) {
-                guard let f = win.floatFrame else { continue }
+                guard var f = win.floatFrame else { continue }
+                if let presented = windowServer.presentation(of: win.windowID)?.frame {
+                    if current, w == mon.active { f = presented } else { f.size = presented.size }
+                }
                 windows.append(Scene.Window(id: win.id, frame: f.offsetBy(dx: -mon.area.minX, dy: -mon.area.minY),
                                             ring: nil, radius: cornerRadius(win.id), floating: true, depth: depth(win.id), image: snapshots.images[win.id], icon: win.worker.icon,
                                             liveWindow: windowServer.liveScenes ? win.windowID : nil))
@@ -269,14 +289,18 @@ extension WindowManager {
         }
     }
 
-    func refreshSnapshots(_ ids: [WindowID]) {
-        // Live pictures need no snapshots, but a window's corner radius, which the ring follows, is measured from one.
-        let ids = windowServer.liveScenes ? ids.filter { snapshots.radii[$0] == nil } : ids
+    /// `corners`: for the corner radius, which the ring follows, even of a window measured before.
+    func refreshSnapshots(_ ids: [WindowID], corners: Bool = false) {
+        // Live pictures need no snapshots, but a window's corner radius is measured from one.
+        let ids = windowServer.liveScenes && !corners ? ids.filter { snapshots.radii[$0] == nil } : ids
         let list = ids.compactMap { id in wins[id].map { (id: id, windowID: $0.windowID) } }
+        let radii = snapshots.radii
         snapshots.refresh(list, scale: NSScreen.main?.backingScaleFactor ?? 2) { [weak self] id in
             guard let self, let image = snapshots.images[id] else { return }
             for scene in scenes.values { scene.setContents(image, for: id) }
             updateRing(at: motion.clock)
+            // The radius is in the state, so watchers of it hear when it's measured.
+            if snapshots.radii[id] != radii[id] { onChange() }
         }
     }
 

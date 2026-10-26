@@ -134,8 +134,27 @@ public struct Workspace: Equatable {
         return (tile, col.width, col.fullWidth)
     }
 
-    mutating func scroll(by dx: Double) {
-        viewOffset += dx
+    private func scrollBounds(_ g: Geometry) -> (lo: Double, hi: Double) {
+        guard !columns.isEmpty else { return (0, 0) }
+        let view = g.area.width
+        let centering = g.config.centerFocusedColumn == .always
+            || (g.config.alwaysCenterSingleColumn && columns.count == 1)
+        func inset(_ i: Int) -> Double {
+            guard !columns[i].fullscreen else { return 0 }
+            let space = max(0, view - columns[i].resolvedWidth(g)) / 2
+            return centering ? space : min(space, g.gap)
+        }
+        let last = columns.count - 1
+        let lo = -inset(0)
+        let hi = columnX(last, g) + columns[last].resolvedWidth(g) + inset(last) - view
+        return (lo, max(lo, hi))
+    }
+
+    mutating func scroll(to position: Double, _ g: Geometry) {
+        guard !columns.isEmpty else { return }
+        let bounds = scrollBounds(g)
+        let band = RubberBand(stiffness: 0.55, limit: 80)
+        viewOffset = band.clamp(position, bounds.lo, bounds.hi) - columnX(active, g)
     }
 
     mutating func scrollWithinEnds(by dx: Double, _ g: Geometry) {
@@ -150,53 +169,42 @@ public struct Workspace: Equatable {
 
     mutating func endSwipe(coastingTo target: Double, _ g: Geometry) {
         guard !columns.isEmpty else { return }
-        let n = columns.count, view = g.area.width, gap = g.gap
+        let view = g.area.width
         let widths = widths(g)
         var xs: [Double] = [], x = 0.0
-        for w in widths { xs.append(x); x += w + gap }
-        let centering = g.config.centerFocusedColumn == .always || (g.config.alwaysCenterSingleColumn && n <= 1)
+        for width in widths { xs.append(x); x += width + g.gap }
+        let bounds = scrollBounds(g)
+        let centering = g.config.centerFocusedColumn == .always
+            || (g.config.alwaysCenterSingleColumn && columns.count == 1)
+        var anchors: [(position: Double, column: Int)] = []
+        for i in columns.indices {
+            let space = max(0, view - widths[i]) / 2
+            let padding = columns[i].fullscreen ? 0 : min(space, g.gap)
+            let positions = centering && !columns[i].fullscreen
+                ? [xs[i] - space]
+                : [xs[i] - padding, xs[i] + widths[i] + padding - view]
+            for position in positions {
+                anchors.append((min(max(position, bounds.lo), bounds.hi), i))
+            }
+        }
+        let anchor = anchors.min { abs($0.position - target) < abs($1.position - target) }!
+        let position = anchor.position
 
-        func padding(_ i: Int) -> Double { columns[i].fullscreen ? 0 : min(max((view - widths[i]) / 2, 0), gap) }
-        func center(_ i: Int) -> Double { view <= widths[i] ? xs[i] : xs[i] - (view - widths[i]) / 2 }
-
-        var snaps: [(pos: Double, column: Int)] = []
+        // Keep focus if its column is fully visible; otherwise choose the most exposed column without moving the view.
+        func visible(_ i: Int) -> Double {
+            max(0, min(xs[i] + widths[i], position + view) - max(xs[i], position))
+        }
         if centering {
-            snaps = (0..<n).map { (columns[$0].fullscreen ? xs[$0] : center($0), $0) }
-        } else {
-            let onOverflow = g.config.centerFocusedColumn == .onOverflow
-            func edges(_ i: Int) -> (left: Double, right: Double) {
-                if columns[i].fullscreen { return (xs[i], xs[i] + widths[i]) }
-                func overflowing(_ j: Int) -> Bool { onOverflow && widths.indices.contains(j) && widths[j] + 3 * gap + widths[i] > view }
-                return (overflowing(i + 1) ? center(i) : xs[i] - padding(i),
-                        overflowing(i - 1) ? center(i) + view : xs[i] + widths[i] + padding(i))
-            }
-            let leftmost = edges(0).left, rightmost = edges(n - 1).right - view
-            snaps = [(leftmost, 0), (rightmost, n - 1)]
-            for i in 0..<n {
-                let (l, r) = edges(i)
-                if leftmost < l && l < rightmost { snaps.append((l, i)) }
-                if leftmost < r - view && r - view < rightmost { snaps.append((r - view, i)) }
-            }
+            active = anchor.column
+        } else if visible(active) < min(widths[active], view) {
+            let forward = target >= viewPos(g)
+            active = columns.indices.max {
+                let a = visible($0), b = visible($1)
+                return a == b ? (forward ? $0 < $1 : $0 > $1) : a < b
+            } ?? active
         }
-        let snap = snaps.min { abs($0.pos - target) < abs($1.pos - target) }!
-        var column = snap.column
-        if !centering {
-            if target >= viewPos(g) {
-                for i in (column + 1)..<max(column + 1, n) {
-                    if snap.pos + view < xs[i] + widths[i] + padding(i) { break }
-                    column = i
-                }
-            } else {
-                for i in (0..<column).reversed() {
-                    if xs[i] - padding(i) < snap.pos { break }
-                    column = i
-                }
-            }
-        }
-        active = column
-        viewOffset = snap.pos - xs[column]
+        viewOffset = position - xs[active]
         returnOffset = nil
-        refit(g)
     }
 
     mutating func focusColumn(_ idx: Int, _ g: Geometry) {

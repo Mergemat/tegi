@@ -1,5 +1,7 @@
 #import <Cocoa/Cocoa.h>
+#include <CommonCrypto/CommonDigest.h>
 #include <dlfcn.h>
+#include <errno.h>
 #include <libgen.h>
 #include <libproc.h>
 #include <mach/mach.h>
@@ -10,24 +12,47 @@
 #include <sys/stat.h>
 #include <sys/un.h>
 #include <unistd.h>
-#ifdef __arm64__
 #include <ptrauth.h>
-#endif
 
 extern const char tegi_stub_start[], tegi_stub_end[], tegi_stub_path[];
 extern const char tegi_stub_pthread[], tegi_stub_dlopen[], tegi_stub_dlsym[], tegi_stub_dlclose[];
 
 static void patch(char *code, const char *slot, const char *name) {
-    void *pointer = dlsym(RTLD_DEFAULT, name);
-#ifdef __arm64__
-    pointer = ptrauth_strip(pointer, ptrauth_key_function_pointer);
-#endif
+    void *pointer = ptrauth_strip(dlsym(RTLD_DEFAULT, name), ptrauth_key_function_pointer);
     memcpy(code + (slot - tegi_stub_start), &pointer, sizeof(pointer));
+}
+
+#ifndef TEGI_GRANT_SHA256
+#error "build with scripts/app.sh, which pins the grant library's hash"
+#endif
+
+// sudo can let this run without a password, so it must not inject anything but tegi's own grant library. The bytes
+// it checked go into a folder only root can write, so nothing can swap the library before Dock loads it.
+static BOOL copy_tegi_grant(const char *from, char *directory, size_t size, char *to, size_t to_size) {
+    NSData *data = [NSData dataWithContentsOfFile:@(from)];
+    if (!data) return NO;
+    unsigned char digest[CC_SHA256_DIGEST_LENGTH];
+    CC_SHA256(data.bytes, (CC_LONG)data.length, digest);
+    char hex[CC_SHA256_DIGEST_LENGTH * 2 + 1];
+    for (int i = 0; i < CC_SHA256_DIGEST_LENGTH; ++i) snprintf(hex + i * 2, 3, "%02x", digest[i]);
+    if (strcmp(hex, TEGI_GRANT_SHA256) != 0) return NO;
+    strlcpy(directory, "/private/var/tmp/tegi.XXXXXX", size);
+    if (!mkdtemp(directory) || chmod(directory, 0755)) return NO;
+    snprintf(to, to_size, "%s/grant.dylib", directory);
+    return [data writeToFile:@(to) atomically:NO] && chmod(to, 0644) == 0;
 }
 
 // The ARM thread-state conversion follows yabai's loader, by Åsmund Vikane,
 // based on Jeremy Legendre's arm64e injection work. See LICENSE.yabai.
 int main(int argc, char **argv) {
+    // Turning direct motion off takes the passwordless rule back without asking again. Only these fixed paths, so
+    // whoever runs it can do no more than that.
+    if (argc == 2 && !strcmp(argv[1], "forget") && geteuid() == 0) {
+        const char *files[] = { "/etc/sudoers.d/tegi", "/Library/PrivilegedHelperTools/tegi-dock-loader" };
+        int result = 0;
+        for (int i = 0; i < 2; ++i) if (unlink(files[i]) && errno != ENOENT) result = 1;
+        return result;
+    }
     if (argc != 3 || geteuid() != 0) {
         fprintf(stderr, "usage: sudo tegi-dock-loader <grant.dylib> <connection-id>\n");
         return 1;
@@ -41,23 +66,28 @@ int main(int argc, char **argv) {
     BOOL worker_finished = NO;
     BOOL running = NO;
     BOOL bound = NO;
-    char path[1024];
-    if (!realpath(argv[1], path)) { perror("grant library"); return 1; }
+    char path[1024], folder[1024];
+    if (!copy_tegi_grant(argv[1], folder, sizeof(folder), path, sizeof(path))) {
+        fprintf(stderr, "not tegi's grant library\n");
+        return 1;
+    }
     NSRunningApplication *dock = [NSRunningApplication runningApplicationsWithBundleIdentifier:@"com.apple.dock"].firstObject;
     struct proc_bsdinfo info;
-    struct stat library;
-    if (!dock || proc_pidinfo(dock.processIdentifier, PROC_PIDTBSDINFO, 0, &info, sizeof(info)) != sizeof(info)
-        || stat(path, &library) || library.st_uid != info.pbi_uid) {
-        fprintf(stderr, "grant library must belong to the Dock session's user\n");
+    if (!dock || proc_pidinfo(dock.processIdentifier, PROC_PIDTBSDINFO, 0, &info, sizeof(info)) != sizeof(info)) {
+        fprintf(stderr, "Dock isn't running\n");
+        unlink(path);
+        rmdir(folder);
         return 1;
     }
     char *end;
     long connection = strtol(argv[2], &end, 10);
-    if (*end || connection <= 0 || connection > INT32_MAX) return 1;
+    if (*end || connection <= 0 || connection > INT32_MAX) { unlink(path); rmdir(folder); return 1; }
     struct sockaddr_un address = { .sun_family = AF_UNIX };
     char directory[1024];
     strlcpy(directory, path, sizeof(directory));
-    if (snprintf(address.sun_path, sizeof(address.sun_path), "%s/grant.sock", dirname(directory)) >= sizeof(address.sun_path)) return 1;
+    if (snprintf(address.sun_path, sizeof(address.sun_path), "%s/grant.sock", dirname(directory)) >= sizeof(address.sun_path)) {
+        unlink(path); rmdir(folder); return 1;
+    }
     listener = socket(AF_UNIX, SOCK_STREAM, 0);
     if (listener < 0 || bind(listener, (struct sockaddr *)&address, sizeof(address))) {
         perror("grant socket"); goto cleanup;
@@ -83,7 +113,6 @@ int main(int argc, char **argv) {
         || mach_vm_protect(task, code_address, code_size, NO, VM_PROT_READ | VM_PROT_EXECUTE) != KERN_SUCCESS) {
         fprintf(stderr, "could not prepare Dock helper memory\n"); goto cleanup;
     }
-#ifdef __arm64__
     typedef kern_return_t (*Convert)(thread_act_t, int, thread_state_flavor_t, thread_state_t, mach_msg_type_number_t,
                                      thread_state_t, mach_msg_type_number_t *);
     Convert convert = (Convert)dlsym(RTLD_DEFAULT, "thread_convert_thread_state");
@@ -101,14 +130,6 @@ int main(int argc, char **argv) {
     if (thread_create_running(task, ARM_THREAD_STATE64, (thread_state_t)&converted, count, &bootstrap) != KERN_SUCCESS) {
         fprintf(stderr, "could not start Dock helper\n"); goto cleanup;
     }
-#elif __x86_64__
-    x86_thread_state64_t state = {};
-    state.__rip = code_address;
-    state.__rsp = stack_address + stack_size / 2;
-    if (thread_create_running(task, x86_THREAD_STATE64, (thread_state_t)&state, x86_THREAD_STATE64_COUNT, &bootstrap) != KERN_SUCCESS) {
-        fprintf(stderr, "could not start Dock helper\n"); goto cleanup;
-    }
-#endif
     running = YES;
     events = kqueue();
     struct kevent change, event;
@@ -151,6 +172,9 @@ cleanup:
     if (peer >= 0) close(peer);
     if (listener >= 0) close(listener);
     if (bound) unlink(address.sun_path);
+    // Dock keeps what it loaded mapped; the file itself can go.
+    unlink(path);
+    rmdir(folder);
     if (events >= 0) close(events);
     if (bootstrap) thread_terminate(bootstrap);
     // A timed-out worker may still be using the stub. Leave that memory alone rather than

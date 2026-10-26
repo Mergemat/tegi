@@ -371,7 +371,7 @@ final class Scene: NSObject {
         place(at: now)
     }
 
-    func openOverview(needsAccess: Bool = false) {
+    func openOverview(needsAccess: Bool = false, velocity: Double? = nil) {
         if needsAccess && notice == nil {
             let notice = CATextLayer()
             notice.string = "Allow Screen Recording for tegi in System Settings to see your windows here"
@@ -387,19 +387,30 @@ final class Scene: NSObject {
         }
         inOverview = true
         panel.ignoresMouseEvents = false
-        zoom = spring(zoom, to: config.overviewZoom, .overviewOpenClose)
+        zoom = spring(zoom, to: config.overviewZoom, .overviewOpenClose, velocity: velocity)
         panel.makeKeyAndOrderFront(nil)
         run()
     }
 
-    func closeOverview(at target: Int) {
+    /// The overview following four fingers: 0 is the workspace at full size, 1 the overview.
+    func followOverview(_ progress: Double) {
+        let z = 1 + (config.overviewZoom - 1) * progress
+        let now = CACurrentMediaTime()
+        zoom = Spring(from: z, to: z, start: now)
+        place(at: now)
+    }
+
+    /// How fast the zoom changes for a given rate of opening, for a release to carry on at the fingers' speed.
+    func zoomVelocity(opening rate: Double) -> Double { (config.overviewZoom - 1) * rate }
+
+    func closeOverview(at target: Int, velocity: Double? = nil) {
         inOverview = false
         tracking = false
         panel.ignoresMouseEvents = true
         cancelDrag()
         notice?.removeFromSuperlayer()
         notice = nil
-        zoom = spring(zoom, to: 1, .overviewOpenClose)
+        zoom = spring(zoom, to: 1, .overviewOpenClose, velocity: velocity)
         index = spring(index, to: Double(target), .overviewOpenClose)
         run()
     }

@@ -108,6 +108,14 @@ import Testing
     #expect(throws: ConfigError(line: 1, message: "[ isn't a valid regular expression")) { try Config.parse("rule * title [ float") }
 }
 
+@Test func aTileRuleTilesAnAppsWindowsButNotItsMenus() throws {
+    let rule = try Config.parse("rule ru.keepcoder.Telegram tile").rule(app: "ru.keepcoder.Telegram", title: "")
+    #expect(!rule.floats(tileable: false, popup: false))
+    #expect(rule.floats(tileable: false, popup: true))
+    #expect(WindowRule().floats(tileable: false, popup: false))
+    #expect(!WindowRule().floats(tileable: true, popup: false))
+}
+
 @Test func focusGesturesAndStartupSettingsParse() throws {
     let c = try Config.parse("""
     focus-follows-mouse max-scroll-amount 25%

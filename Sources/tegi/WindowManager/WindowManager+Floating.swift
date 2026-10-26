@@ -30,7 +30,10 @@ extension WindowManager {
             } else if !floatHidden.contains(win.id) {
                 floatHidden.insert(win.id)
                 let size = win.floatFrame?.size ?? applied[win.id]?.size ?? CGSize(width: 600, height: 400)
-                send(win.id, world.place(CGRect(origin: CGPoint(x: -1_000_000, y: 0), size: size), on: m).frame)
+                let frame = windowServer.active
+                    ? win.floatFrame ?? CGRect(origin: world.monitors[m].area.origin, size: size)
+                    : world.place(CGRect(origin: CGPoint(x: -1_000_000, y: 0), size: size), on: m).frame
+                send(win.id, frame)
             }
         }
     }
@@ -60,7 +63,8 @@ extension WindowManager {
     }
 
     func setFloating(_ win: Win, _ floating: Bool) {
-        guard win.floating != floating else { return }
+        // A menu or popover can't be tiled, whatever asks.
+        guard win.floating != floating, floating || !win.popup else { return }
         win.floating = floating
         if floating {
             let m = world.locate(win.id)?.monitor ?? world.focusedMonitor
@@ -181,7 +185,7 @@ extension WindowManager {
     /// as an app's onboarding panel. macOS raises a tile above them when it takes focus, so they go back on top.
     func keepFloatingOnTop() {
         guard windowServer.liveScenes else { return }
-        let tiled = Set(wins.values.filter { !$0.floating && !$0.suspended && $0.windowID != 0 }.map(\.windowID))
+        let tiled = Set(wins.values.filter { !$0.fullScreen && !$0.suspended && $0.windowID != 0 }.map(\.windowID))
         let me = getpid()
         let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
         let screens = world.monitors.map(\.screen)
@@ -207,11 +211,13 @@ extension WindowManager {
     /// After macOS raises a tile, which apps finish doing after tegi hears they took focus: the ring and the windows that
     /// float go back above it.
     func restack() {
+        // Paused, tegi leaves the windows alone.
+        guard !paused else { return }
         keepFloatingOnTop()
         ring.restack()
     }
 
-    func watchTileOrder() {
+    func watchWindowOrder() {
         WindowServer.watchOrder(of: wins.values.filter { !$0.floating && !$0.suspended && $0.windowID != 0 }.map(\.windowID))
     }
 }

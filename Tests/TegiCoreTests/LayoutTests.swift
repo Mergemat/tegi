@@ -496,6 +496,76 @@ private struct SplitMix {
     #expect(bottom <= 790)
 }
 
+@Test(arguments: [1, 2]) func aRefusedHeightLeavesRoomForItsStackedNeighbour(id: WindowID) throws {
+    let c = config()
+    var w = world([1, 2], config: c)
+    w.perform(.consumeOrExpelWindowLeft, config: c)
+    let asked = try #require(w.frame(id, c)).size
+    _ = w.observeSize(CGSize(width: asked.width, height: 500), asked: asked, for: id)
+    let top = try #require(w.frame(1, c)), bottom = try #require(w.frame(2, c))
+    #expect(w.frame(id, c)?.height == 500)
+    #expect(bottom.minY - top.maxY == CGFloat(c.gap))
+    #expect(top.minY == 10)
+    #expect(bottom.maxY == 790)
+    let preview = w.stripFrames(monitor: 0, workspace: 0, config: c)
+    #expect(preview.first { $0.id == id }?.frame.height == 500)
+}
+
+@Test func anOverfullStackRevealsTheFocusedWindowWithoutOverlapping() throws {
+    let c = config()
+    var w = world([1, 2], config: c)
+    w.perform(.consumeOrExpelWindowLeft, config: c)
+    for id in 1...2 {
+        let asked = try #require(w.frame(id, c)).size
+        _ = w.observeSize(CGSize(width: asked.width, height: 500), asked: asked, for: id)
+    }
+    for id in [1, 2, 1] {
+        w.focus(id, config: c)
+        let active = try #require(w.frame(id, c))
+        #expect(active.minY >= 10)
+        #expect(active.maxY <= 790)
+        let frames = w.layout(config: c)
+        #expect(frames[1]?.strip?.maxY == frames[2]!.strip!.minY - CGFloat(c.gap))
+    }
+}
+
+@Test func anExplicitHeightCannotTakeSpaceReservedByItsNeighbour() throws {
+    let c = config()
+    var w = world([1, 2], config: c)
+    w.perform(.consumeOrExpelWindowLeft, config: c)
+    w.focus(1, config: c)
+    w.perform(.setWindowHeight(.setFixed(600)), config: c)
+    let asked = try #require(w.frame(2, c)).size
+    _ = w.observeSize(CGSize(width: asked.width, height: 500), asked: asked, for: 2)
+    #expect(w.frame(1, c)?.height == 270)
+    #expect(w.frame(2, c)?.height == 500)
+    #expect(w.frame(2, c)?.maxY == 790)
+}
+
+@Test func learnedHeightsFollowTheWindowAndCanBeRelearned() throws {
+    let c = config()
+    var w = world([1, 2], config: c)
+    w.perform(.consumeOrExpelWindowLeft, config: c)
+    let asked = try #require(w.frame(1, c)).size
+    _ = w.observeSize(CGSize(width: asked.width, height: 500), asked: asked, for: 1)
+    w.perform(.expelWindowFromColumn, config: c)
+    w.perform(.consumeWindowIntoColumn, config: c)
+    #expect(w.frame(1, c)?.height == 500)
+    w.focus(1, config: c)
+    w.perform(.resetWindowHeight, config: c)
+    #expect(w.frame(1, c)?.height == asked.height)
+    _ = w.observeSize(CGSize(width: asked.width, height: 500), asked: asked, for: 1)
+    _ = w.observeSize(CGSize(width: asked.width, height: 300), asked: asked, for: 1)
+    #expect(w.frame(1, c)?.height == asked.height)
+    _ = w.observeSize(CGSize(width: asked.width, height: 500), asked: asked, for: 1)
+    w.perform(.setColumnWidth(.setFixed(600)), config: c)
+    #expect(w.frame(1, c)?.height == asked.height)
+    w.remove(1, config: c)
+    w.insert(1, config: c)
+    w.perform(.consumeOrExpelWindowLeft, config: c)
+    #expect(w.frame(1, c)?.height == asked.height)
+}
+
 @Test func droppingBetweenWorkspacesMakesANewOne() {
     let c = config()
     var w = world([1, 2], config: c)

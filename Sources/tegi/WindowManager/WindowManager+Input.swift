@@ -5,10 +5,23 @@ import TegiCore
 struct Swipe {
     enum Axis { case horizontal, vertical }
     var monitor: Int
+    var origin: Double
     var tracker = SwipeTracker()
     var axis: Axis?
     var pending = CGVector.zero
     var startIndex: Int?
+}
+
+/// Four fingers opening or closing the overview as they go, as Mission Control does.
+struct OverviewSwipe {
+    /// Points of travel that open it fully: about a third of the trackpad's height.
+    static let travel = 200.0
+    var from: Double
+    var tracker = SwipeTracker()
+
+    var openness: Double { RubberBand.workspaces.clamp(from + tracker.position / Self.travel, 0, 1) }
+    /// Where a release coasts to, open or shut, and how fast it's opening per second as it does.
+    var release: (open: Bool, rate: Double) { (from + tracker.projectedEnd / Self.travel > 0.5, tracker.velocity / Self.travel) }
 }
 
 struct Grab {
@@ -29,12 +42,20 @@ extension WindowManager {
         if let s = swipe, s.axis != nil { scrolled(.ended(time: CACurrentMediaTime())) }
         swipe = nil
         input?.stop()
-        input = InputTap(modifier: config.swipeModifier) { [weak self] in self?.inputEvent($0) }
         multitouch?.shutdown()
         multitouch = config.threeFingerSwipe ? Multitouch { [weak self] in self?.touch($0) } : nil
+        let touch = multitouch
+        input = InputTap(modifier: config.swipeModifier, claimed: { touch?.claim ?? (0, 0) }) { [weak self] in self?.inputEvent($0) }
         for m in monitors { NSEvent.removeMonitor(m) }
         monitors = [
-            NSEvent.addGlobalMonitorForEvents(matching: .leftMouseUp) { [weak self] _ in self?.nativeDragEnded() },
+            NSEvent.addGlobalMonitorForEvents(matching: .leftMouseDown) { [weak self] _ in
+                guard let self else { return }
+                nativePressed = window(at: pointer())
+            },
+            NSEvent.addGlobalMonitorForEvents(matching: .leftMouseUp) { [weak self] _ in
+                self?.nativePressed = nil
+                self?.nativeDragEnded()
+            },
             NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in self?.pendingFocus = nil },
             NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved, .leftMouseDragged]) { [weak self] _ in self?.pointerMoved() },
         ].compactMap { $0 }
@@ -52,6 +73,8 @@ extension WindowManager {
         case .began: scrolled(.began)
         case .changed(let dx, let dy, let t): scrolled(.changed(dx: dx, dy: dy, time: t))
         case .ended(let t): scrolled(.ended(time: t))
+        case .momentum(let dx, _, let t): scrolled(.momentum(dx: dx, time: t))
+        case .momentumEnded: scrolled(.momentumEnded)
         case .wheel(let dx, let dy): scrolled(.wheel(dx: dx, dy: dy))
         case .grab(let right, let point): beginGrab(at: point, resize: right)
         case .drag(let point): moveGrab(to: point)
@@ -59,21 +82,53 @@ extension WindowManager {
         }
     }
 
+    /// Four fingers. Three scroll the strip through the scroll events macOS makes of them, as anything scrolls on a Mac.
     func touch(_ event: Multitouch.Event) {
         guard !paused else { return }
-        let area = world.monitors.indices.contains(world.focusedMonitor) ? world.monitors[world.focusedMonitor].area.size : CGSize(width: 1440, height: 900)
         switch event {
-        case .began: scrolled(.began)
-        case .changed(let dx, let dy, let t): scrolled(.changed(dx: dx * area.width, dy: dy * 600, time: t))
-        case .ended(let t): scrolled(.ended(time: t))
-        case .fourFingerSwipe(let up): setOverview(up)
+        case .began(let fingers):
+            if fingers == 4 { beginOverviewSwipe() }
+        case .changed(_, let dy, let t):
+            // Opening is up the trackpad, or down with natural scrolling off, as macOS's own is.
+            followOverviewSwipe(-dy * 600, at: t)
+        case .ended:
+            endOverviewSwipe()
         }
+    }
+
+    func beginOverviewSwipe() {
+        let swipe = OverviewSwipe(from: overview ? 1 : 0)
+        overviewSwipe = swipe
+        // Shown at once, at whatever openness the fingers are at.
+        if !overview { setOverview(true) }
+        followOverview(swipe.openness)
+    }
+
+    func followOverviewSwipe(_ opening: Double, at time: Double) {
+        guard var swipe = overviewSwipe else { return }
+        swipe.tracker.push(opening, at: time)
+        overviewSwipe = swipe
+        followOverview(swipe.openness)
+    }
+
+    func endOverviewSwipe() {
+        guard let swipe = overviewSwipe else { return }
+        overviewSwipe = nil
+        let (open, rate) = swipe.release
+        guard open, overview else { return setOverview(open, velocity: rate) }
+        for scene in scenes.values where scene.inOverview { scene.openOverview(velocity: scene.zoomVelocity(opening: rate)) }
+    }
+
+    private func followOverview(_ openness: Double) {
+        for scene in scenes.values where scene.inOverview { scene.followOverview(openness) }
     }
 
     enum Scroll {
         case began
         case changed(dx: Double, dy: Double, time: Double)
         case ended(time: Double)
+        case momentum(dx: Double, time: Double)
+        case momentumEnded
         case wheel(dx: Double, dy: Double)
     }
 
@@ -81,21 +136,32 @@ extension WindowManager {
         guard !paused else { return }
         switch event {
         case .began:
-            swipe = Swipe(monitor: pointerMonitor() ?? world.focusedMonitor)
+            let m = pointerMonitor() ?? world.focusedMonitor
+            var origin = world.viewPosition(monitor: m, config: config)
+            let now = max(CACurrentMediaTime(), motion.clock)
+            // The model already holds the last flick's destination; fingers take over where the strip is visible now.
+            for (id, target) in targets where target.monitor == m {
+                guard let strip = target.strip, let current = motion.current(id, at: now), current.monitor == m else { continue }
+                origin += strip.minX - current.frame.minX
+                break
+            }
+            world.scrollView(monitor: m, to: origin, config: config)
+            swipe = Swipe(monitor: m, origin: origin)
+            relayout(tracking: true)
         case .changed(var dx, var dy, let time):
             guard var s = swipe else { return }
             if s.axis == nil {
                 s.pending.dx += dx
                 s.pending.dy += dy
-                guard hypot(s.pending.dx, s.pending.dy) >= 16 else { return swipe = s }
+                guard hypot(s.pending.dx, s.pending.dy) >= 4 else { return swipe = s }
                 s.axis = abs(s.pending.dx) >= abs(s.pending.dy) ? .horizontal : .vertical
                 (dx, dy) = (s.pending.dx, s.pending.dy)
             }
             switch s.axis {
             case .horizontal:
                 s.tracker.push(-dx, at: time)
-                world.scrollView(monitor: s.monitor, by: -dx, config: config)
-                relayout(direct: true)
+                world.scrollView(monitor: s.monitor, to: s.origin + s.tracker.position, config: config)
+                relayout(tracking: true)
             case .vertical:
                 s.tracker.push(-dy, at: time)
                 followSwipe(&s)
@@ -103,21 +169,21 @@ extension WindowManager {
                 break
             }
             swipe = s
-        case .ended:
-            guard let s = swipe else { return }
-            swipe = nil
+        case .ended(let time):
+            guard var s = swipe else { return }
+            s.tracker.push(0, at: time)
             switch s.axis {
             case .horizontal:
-                let before = world.focusedWindow
-                let pos = world.viewPosition(monitor: s.monitor, config: config)
-                world.endSwipe(monitor: s.monitor, coastingTo: pos + s.tracker.projectedEnd - s.tracker.position, config: config)
-                relayout(fling: (-s.tracker.velocity, s.monitor))
-                if world.focusedWindow != before && !overview { focusModel() }
+                settle(s)
             case .vertical:
+                swipe = nil
                 endVerticalSwipe(s)
             case nil:
-                break
+                swipe = nil
             }
+        case .momentum, .momentumEnded:
+            // The release glide already owns the landing point; the system's free-scroll tail must not move it again.
+            break
         case .wheel(let dx, let dy):
             let now = CACurrentMediaTime()
             if abs(dy) >= abs(dx) {
@@ -128,6 +194,15 @@ extension WindowManager {
                 run(dx < 0 ? .focusColumnRight : .focusColumnLeft)
             }
         }
+    }
+
+    func settle(_ s: Swipe) {
+        swipe = nil
+        let before = world.focusedWindow
+        let pos = world.viewPosition(monitor: s.monitor, config: config)
+        world.endSwipe(monitor: s.monitor, coastingTo: pos + s.tracker.projectedEnd - s.tracker.position, config: config)
+        relayout(fling: (-s.tracker.velocity, s.monitor))
+        if world.focusedWindow != before && !overview { focusModel(layout: false) }
     }
 
     func swipeRange(_ start: Int, _ m: Int) -> (lo: Double, hi: Double) {
@@ -290,8 +365,20 @@ extension WindowManager {
         focusModel()
     }
 
+    /// A press in another app must not turn an AX echo into a native drag of this window.
+    func yieldToNative(_ id: WindowID) -> Bool {
+        if nativeMoving.contains(id) { return true }
+        guard windowServer.active, nativePressed == id, grab == nil, let win = wins[id] else { return false }
+        nativeMoving.insert(id)
+        motion.stop(id, at: nil)
+        compositor.release(id)
+        win.worker.cancelPosition(id)
+        return true
+    }
+
     func nativeDragEnded() {
-        guard !dragged.isEmpty else { return }
+        guard !dragged.isEmpty || !nativeMoving.isEmpty else { return }
+        nativeMoving = []
         for (id, frame) in dragged {
             guard let win = wins[id], !win.floating, !win.suspended, let loc = world.locate(id) else { continue }
             if resizedByUser.contains(id) {

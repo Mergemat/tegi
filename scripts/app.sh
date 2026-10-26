@@ -6,16 +6,17 @@
 #   ./scripts/app.sh run      build, quit the running tegi, start the new one
 #
 #   VERSION=0.1.0             version to stamp (default: dev)
-#   UNIVERSAL=1               build for Apple silicon and Intel
+#   FAST=1                    rebuild in seconds, optimizing file by file; not for timing motion
 #   SIGN_IDENTITY="Developer ID Application: …"   sign for distribution (default: ad-hoc)
 set -e
 cd "$(dirname "$0")/.."
 
 bundle_id=io.github.mergemat.tegi
 version=${VERSION:-dev}
-arch_flags=""
-[ "$UNIVERSAL" = 1 ] && arch_flags="--arch arm64 --arch x86_64"
+arch_flags="--arch arm64"
 
+# Optimizing the whole module at once takes ~20 s after any change, on one core.
+[ "$FAST" = 1 ] && arch_flags="$arch_flags --build-system native --scratch-path .build/fast -Xswiftc -no-whole-module-optimization"
 swift build -c release $arch_flags
 bin="$(swift build -c release $arch_flags --show-bin-path)/tegi"
 
@@ -24,18 +25,19 @@ rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp "$bin" "$app/Contents/MacOS/tegi"
 cp Resources/AppIcon.icns Resources/Assets.car "$app/Contents/Resources/"
-helper_arch="-arch $(uname -m)"
-[ "$(uname -m)" = arm64 ] && helper_arch="-arch arm64e"
-[ "$UNIVERSAL" = 1 ] && helper_arch="-arch arm64e -arch x86_64"
-clang $helper_arch -mmacosx-version-min=14.0 -O2 \
-    Helpers/WindowServer/Loader.m Helpers/WindowServer/Stub.S -framework Cocoa \
-    -o "$app/Contents/Resources/tegi-dock-loader"
+# arm64e, as Dock is, to inject into it.
+helper_arch="-arch arm64e"
 clang $helper_arch -mmacosx-version-min=14.0 -O2 -dynamiclib \
     Helpers/WindowServer/Grant.c -F /System/Library/PrivateFrameworks -framework SkyLight -framework CoreGraphics \
     -o "$app/Contents/Resources/tegi-grant.dylib"
-cp Helpers/WindowServer/LICENSE.yabai "$app/Contents/Resources/"
-codesign --force --sign "${SIGN_IDENTITY:--}" "$app/Contents/Resources/tegi-dock-loader"
 codesign --force --sign "${SIGN_IDENTITY:--}" "$app/Contents/Resources/tegi-grant.dylib"
+# The loader runs as root without a password once tegi remembers it, so it injects only this exact library.
+grant_sha256=$(shasum -a 256 "$app/Contents/Resources/tegi-grant.dylib" | cut -d' ' -f1)
+clang $helper_arch -mmacosx-version-min=14.0 -O2 -DTEGI_GRANT_SHA256="\"$grant_sha256\"" \
+    Helpers/WindowServer/Loader.m Helpers/WindowServer/Stub.S -framework Cocoa \
+    -o "$app/Contents/Resources/tegi-dock-loader"
+codesign --force --sign "${SIGN_IDENTITY:--}" "$app/Contents/Resources/tegi-dock-loader"
+cp Helpers/WindowServer/LICENSE.yabai "$app/Contents/Resources/"
 cat > "$app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

@@ -23,7 +23,7 @@ jobs:
 
       - name: Build the app
         run: |
-          VERSION="0.0.0-${GITHUB_SHA::7}" UNIVERSAL=1 ./scripts/app.sh
+          VERSION="0.0.0-${GITHUB_SHA::7}" ./scripts/app.sh
           ditto -c -k --keepParent .build/tegi.app tegi.zip
 
       # ditto keeps the executable bit and signature that a plain artifact upload would lose.

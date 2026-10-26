@@ -37,6 +37,7 @@ public struct Column: Equatable {
 struct Geometry {
     var area: CGRect
     var config: Config
+    var heightLimits: [WindowID: CGSize] = [:]
     var gap: Double { config.gap }
 }
 
@@ -61,6 +62,12 @@ extension Column {
     func tileHeights(_ g: Geometry) -> [Double] {
         if fullscreen { return Array(repeating: g.area.height, count: tiles.count) }
         let full = max(1, g.area.height - 2 * g.gap)
+        let width = resolvedWidth(g)
+        let minimums = tiles.map { tile -> Double in
+            // Responsive apps can accept a smaller height at a different width.
+            guard let limit = g.heightLimits[tile.id], abs(limit.width - width) <= 1 else { return 1 }
+            return max(1, limit.height.rounded(.up))
+        }
         func explicit(_ h: Tile.Height) -> Double? {
             switch h {
             case .auto: return nil
@@ -72,33 +79,46 @@ extension Column {
         }
         if tabbed {
             let h = tiles.lazy.compactMap { explicit($0.height) }.first ?? full
-            return Array(repeating: min(max(1, h), full), count: tiles.count)
+            return minimums.map { max($0, min(max(1, h), full)) }
         }
         let n = Double(tiles.count)
-        let autoCount = tiles.filter { explicit($0.height) == nil }.count
-        var left = max(n, g.area.height - g.gap * (n + 1))
+        var reserved = minimums.reduce(0, +)
+        var left = max(reserved, g.area.height - g.gap * (n + 1))
         var out: [Double?] = Array(repeating: nil, count: tiles.count)
-        var unallocated = tiles.count
         for i in tiles.indices {
             guard let h = explicit(tiles[i].height) else { continue }
-            unallocated -= 1
-            out[i] = min(max(1, h), max(1, left - Double(unallocated)))
+            reserved -= minimums[i]
+            out[i] = min(max(minimums[i], h), left - reserved)
             left -= out[i]!
         }
-        var weightLeft = tiles.reduce(0.0) { sum, t in
-            if case .auto(let w) = t.height, explicit(t.height) == nil { return sum + w }
-            return sum
+        var autos = tiles.indices.filter { out[$0] == nil }
+        func weight(_ i: Int) -> Double {
+            if case .auto(let w) = tiles[i].height { return w }
+            return 1
         }
-        var autosLeft = autoCount
-        for i in tiles.indices where out[i] == nil {
-            guard case .auto(let w) = tiles[i].height else { continue }
-            let h = autosLeft == 1 ? left : (left * w / max(weightLeft, .ulpOfOne)).rounded(.down)
-            out[i] = max(1, h)
-            left -= h
-            weightLeft -= w
-            autosLeft -= 1
+        while !autos.isEmpty {
+            var weightLeft = max(autos.reduce(0) { $0 + weight($1) }, .ulpOfOne)
+            let constrained = autos.filter { left * weight($0) / weightLeft < minimums[$0] }
+            if !constrained.isEmpty {
+                for i in constrained { out[i] = minimums[i]; left -= minimums[i] }
+                autos.removeAll { out[$0] != nil }
+                continue
+            }
+            for (index, i) in autos.enumerated() {
+                let h = index == autos.count - 1 ? left : (left * weight(i) / weightLeft).rounded(.down)
+                out[i] = max(minimums[i], h)
+                left -= out[i]!
+                weightLeft -= weight(i)
+            }
+            break
         }
         return out.map { $0 ?? 1 }
+    }
+
+    func heightOffset(_ heights: [Double], _ g: Geometry) -> Double {
+        guard !fullscreen, !tabbed, heights.indices.contains(active) else { return 0 }
+        let top = heights.prefix(active).reduce(0, +) + Double(active) * g.gap
+        return max(0, min(top, top + heights[active] - (g.area.height - 2 * g.gap)))
     }
 
     mutating func convertHeightsToAuto(_ g: Geometry) {

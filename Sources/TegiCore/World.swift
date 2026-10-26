@@ -47,6 +47,7 @@ public struct World: Equatable {
     public var focusedMonitor = 0
     public var emptyWorkspaceAboveFirst = false
     public var pinned: Set<Int> = []
+    private var heightLimits: [WindowID: CGSize] = [:]
     private var nextWorkspaceID = 1
 
     public init(monitors: [Monitor]) {
@@ -69,7 +70,9 @@ public struct World: Equatable {
         return nil
     }
 
-    private func geometry(_ m: Int, _ config: Config) -> Geometry { Geometry(area: monitors[m].area, config: config) }
+    private func geometry(_ m: Int, _ config: Config) -> Geometry {
+        Geometry(area: monitors[m].area, config: config, heightLimits: heightLimits)
+    }
 
     private mutating func newWorkspace(home: UInt32) -> Workspace {
         defer { nextWorkspaceID += 1 }
@@ -172,6 +175,7 @@ public struct World: Equatable {
     }
 
     public mutating func remove(_ id: WindowID, config: Config) {
+        heightLimits[id] = nil
         guard let (m, w, c, t) = locate(id) else { return }
         _ = monitors[m].workspaces[w].removeTile(c, t, geometry(m, config))
         normalize(m)
@@ -289,6 +293,20 @@ public struct World: Equatable {
         if monitors[m].workspaces[w].active == c { monitors[m].workspaces[w].refit(g) }
     }
 
+    public mutating func observeSize(_ actual: CGSize, asked: CGSize, for id: WindowID) -> Bool {
+        guard locate(id) != nil, actual.width.isFinite, actual.height.isFinite,
+              actual.width > 0, actual.height > 0 else { return false }
+        let before = heightLimits[id]
+        if actual.height > asked.height + 1 {
+            heightLimits[id] = actual
+        } else if let before, abs(before.width - actual.width) > 1 || actual.height < before.height - 1 {
+            heightLimits[id] = nil
+        }
+        return heightLimits[id] != before
+    }
+
+    public func heightLimit(for id: WindowID) -> CGSize? { heightLimits[id] }
+
     public mutating func setDisplays(_ displays: [Display], config: Config) {
         guard !displays.isEmpty else { return }
         let old = monitors
@@ -353,7 +371,7 @@ public struct World: Equatable {
         for (c, col) in ws.columns.enumerated() {
             let width = col.resolvedWidth(g)
             let heights = col.tileHeights(g)
-            var y = col.fullscreen ? 0 : g.gap
+            var y = col.fullscreen ? 0 : g.gap - col.heightOffset(heights, g)
             for (t, tile) in col.tiles.enumerated() {
                 if !col.tabbed || t == col.active {
                     out.append((tile.id, CGRect(x: (x - view).rounded(), y: y.rounded(), width: width, height: heights[t]),
@@ -378,9 +396,9 @@ public struct World: Equatable {
         return monitors[m].workspaces[monitors[m].active].viewPos(geometry(m, config))
     }
 
-    public mutating func scrollView(monitor m: Int, by dx: Double, config: Config) {
+    public mutating func scrollView(monitor m: Int, to position: Double, config: Config) {
         guard monitors.indices.contains(m) else { return }
-        withActive(m, config) { ws, _ in ws.scroll(by: dx) }
+        withActive(m, config) { ws, g in ws.scroll(to: position, g) }
     }
 
     public mutating func edgeScroll(monitor m: Int, by dx: Double, config: Config) {
@@ -527,7 +545,9 @@ public struct World: Equatable {
         case .switchPresetColumnWidth: withActive(m, config) { ws, g in ws.cycleWidth(forwards: true, g) }
         case .switchPresetColumnWidthBack: withActive(m, config) { ws, g in ws.cycleWidth(forwards: false, g) }
         case .switchPresetWindowHeight: withActive(m, config) { ws, g in ws.cycleHeight(g) }
-        case .resetWindowHeight: withActive(m, config) { ws, _ in ws.resetHeight() }
+        case .resetWindowHeight:
+            if let id = focusedWindow { heightLimits[id] = nil }
+            withActive(m, config) { ws, _ in ws.resetHeight() }
         case .setColumnWidth(let c): withActive(m, config) { ws, g in ws.setWidth(c, g) }
         case .setWindowHeight(let c): withActive(m, config) { ws, g in ws.setHeight(c, g) }
         case .maximizeColumn: withActive(m, config) { ws, g in ws.toggleFullWidth(g) }
@@ -617,14 +637,14 @@ public struct World: Equatable {
         var out: [WindowID: Placement] = [:]
         for (mi, mon) in monitors.enumerated() {
             let others = monitors.enumerated().filter { $0.offset != mi }.map(\.element.screen)
-            let g = Geometry(area: mon.area, config: config)
+            let g = geometry(mi, config)
             for (wi, ws) in mon.workspaces.enumerated() {
                 let view = ws.viewPos(g)
                 var x = 0.0
                 for col in ws.columns {
                     let w = col.resolvedWidth(g)
                     let heights = col.tileHeights(g)
-                    var y = mon.area.minY + (col.fullscreen ? 0 : g.gap)
+                    var y = mon.area.minY + (col.fullscreen ? 0 : g.gap - col.heightOffset(heights, g))
                     for (t, tile) in col.tiles.enumerated() {
                         let frame = CGRect(x: (mon.area.minX + x - view).rounded(), y: y.rounded(), width: w, height: heights[t])
                         if !col.tabbed { y += heights[t] + g.gap }
