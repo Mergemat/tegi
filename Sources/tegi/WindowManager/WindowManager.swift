@@ -75,6 +75,7 @@ final class WindowManager {
     let motion = Motion()
     var targets: [WindowID: Placement] = [:]
     var lastViews: [Double] = []
+    var homes: [WindowID: Int] = [:]
     var pressed: CFTimeInterval?
     var sentSomething = false
     var latency: String?
@@ -303,10 +304,16 @@ final class WindowManager {
         let animate = !direct && config.animations.on && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         followWorkspaces(animate: animate)
         let views = world.monitors.indices.map { world.viewPosition(monitor: $0, config: config) }
+        let wereHomes = homes
+        homes = Dictionary(world.monitors.flatMap { $0.workspaces.flatMap { ws in ws.columns.flatMap { $0.tiles.map { ($0.id, ws.id) } } } },
+                           uniquingKeysWith: { a, _ in a })
         defer { lastViews = views }
         for (id, p) in placements {
             guard wins[id] != nil, grab?.window != id || grab?.resize == true else { continue }
-            if animate, let to = p.strip, let from = motion.current(id, at: now), from.monitor == p.monitor,
+            // A window changing workspace rides the workspace slide's picture, which hides as soon as the slide lands;
+            // flying it across the strip underneath would show it still on its way.
+            let changedWorkspace = wereHomes[id].map { $0 != homes[id] } ?? false
+            if animate, !changedWorkspace, let to = p.strip, let from = motion.current(id, at: now), from.monitor == p.monitor,
                let springs = springs(from: from.frame, to: to, monitor: p.monitor, views: views),
                motion.move(id, from: from.frame, to: to, monitor: p.monitor, at: now,
                            velocity: fling.flatMap { $0.monitor == p.monitor ? $0.velocity : nil }, springs: springs) {
