@@ -71,8 +71,17 @@ final class WindowManager {
     var pendingFocus: (id: WindowID?, until: Date)?
     var dragged: [WindowID: CGRect] = [:]
     var resizedByUser: Set<WindowID> = []
+    /// The layout size each window was last forced back to after resizing itself, so a refusal is forced only once.
+    var forced: [WindowID: CGSize] = [:]
 
     let motion = Motion()
+    let windowServer: WindowServer
+    var serverUnsynced: Set<WindowID> = []
+    var resizing: [WindowID: (to: CGRect, monitor: Int, springs: Motion.Springs)] = [:]
+    let compositor: Compositor
+    var standInPanels: [UInt32: StandIns] = [:]
+    var serverAuthorizationAttempted = false
+    var serverScenesLive = false
     var targets: [WindowID: Placement] = [:]
     var lastViews: [Double] = []
     var homes: [WindowID: Int] = [:]
@@ -111,8 +120,13 @@ final class WindowManager {
 
     var canCapture: Bool { snapshots.allowed }
 
-    init(config: Config) {
+    init(config: Config, windowServer: WindowServer = WindowServer()) {
         self.config = config
+        self.windowServer = windowServer
+        compositor = Compositor(server: windowServer)
+        windowServer.configure(enabled: config.animations.windowServer)
+        windowServer.onChange = { [weak self] in self?.serverBackendChanged() }
+        startCompositor()
     }
 
     func start() {
@@ -137,6 +151,15 @@ final class WindowManager {
             },
         ]
         startInput()
+        var restackQueued = false
+        WindowServer.onReorder = { [weak self] window in
+            guard let self, !restackQueued, wins.values.contains(where: { $0.windowID == window && !$0.floating }) else { return }
+            restackQueued = true
+            DispatchQueue.main.async { [weak self] in
+                restackQueued = false
+                self?.restack()
+            }
+        }
         recent.onCommit = { [weak self] id in self?.focusWindow(id) }
         ring.onPickTab = { [weak self] id in self?.focusWindow(id) }
         for app in NSWorkspace.shared.runningApplications { add(app, initial: true) }
@@ -227,6 +250,12 @@ final class WindowManager {
 
     func update(_ new: Config) {
         let old = config
+        if old.animations.windowServer != new.animations.windowServer {
+            finishServerMotion()
+            windowServer.configure(enabled: new.animations.windowServer)
+            serverAuthorizationAttempted = false
+            applied = [:]
+        }
         config = new
         applyConfigToWorld()
         for win in wins.values {
@@ -263,6 +292,10 @@ final class WindowManager {
     func rule(_ win: Win) -> WindowRule { config.rule(app: win.worker.bundleID, title: win.title) }
 
     func restore(wait: Bool = true) {
+        motion.cancel()
+        finishServerMotion()
+        for scene in scenes.values { scene.hide() }
+        overview = false
         let group = DispatchGroup()
         var cascade = 0
         let hidden = world.layout(config: config).filter { !$0.value.visible }.map(\.key) + Array(floatHidden)
@@ -293,6 +326,7 @@ final class WindowManager {
     func relayout(measuringFrom start: CFAbsoluteTime? = nil, direct: Bool = false,
                   fling: (velocity: Double, monitor: Int)? = nil) {
         guard !paused else { return }
+        requestServerAuthorization()
         if let start { pressed = start }
         sentSomething = false
         defer {
@@ -304,6 +338,7 @@ final class WindowManager {
         let animate = !direct && config.animations.on && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         followWorkspaces(animate: animate)
         let views = world.monitors.indices.map { world.viewPosition(monitor: $0, config: config) }
+        updateCompositor()
         let wereHomes = homes
         homes = Dictionary(world.monitors.flatMap { $0.workspaces.flatMap { ws in ws.columns.flatMap { $0.tiles.map { ($0.id, ws.id) } } } },
                            uniquingKeysWith: { a, _ in a })
@@ -314,23 +349,63 @@ final class WindowManager {
             // flying it across the strip underneath would show it still on its way.
             let changedWorkspace = wereHomes[id].map { $0 != homes[id] } ?? false
             if animate, !changedWorkspace, let to = p.strip, let from = motion.current(id, at: now), from.monitor == p.monitor,
-               let springs = springs(from: from.frame, to: to, monitor: p.monitor, views: views),
-               motion.move(id, from: from.frame, to: to, monitor: p.monitor, at: now,
-                           velocity: fling.flatMap { $0.monitor == p.monitor ? $0.velocity : nil }, springs: springs) {
-                continue
+               let springs = springs(from: from.frame, to: to, monitor: p.monitor, views: views) {
+                if compositor.standIn(id) != nil || beginStandIn(id, from: from.frame, to: to, monitor: p.monitor) {
+                    retargetStandIn(id, to: p.frame)
+                    _ = motion.move(id, from: from.frame, to: to, monitor: p.monitor, at: now, springs: springs)
+                    continue
+                }
+                if resizing[id]?.to.size == to.size {
+                    resizing[id] = (to, p.monitor, springs)
+                    continue
+                }
+                if resizeInPlace(id, from: from.frame, to: to, monitor: p.monitor, springs: springs) { continue }
+                resizing[id] = nil
+                if motion.move(id, from: from.frame, to: to, monitor: p.monitor, at: now,
+                               velocity: fling.flatMap { $0.monitor == p.monitor ? $0.velocity : nil }, springs: springs,
+                               animateSize: !windowServer.active) {
+                    if windowServer.active, wins[id]?.windowID != 0 {
+                        serverUnsynced.insert(id)
+                        if from.frame.size != to.size { requestSize(id, to.size, at: nil) }
+                    }
+                    continue
+                }
             }
+            resizing[id] = nil
+            compositor.endStandIn(id)
             motion.stop(id, at: p.strip.map { ($0, p.monitor) })
             send(id, p.frame)
         }
         motion.forget { placements[$0] == nil }
+        watchTileOrder()
+        resizing = resizing.filter { placements[$0.key] != nil }
         placeFloating()
         if motion.isMoving {
             tick(at: now)
             motion.run { [weak self] t in self?.tick(at: t) }
         }
         targets = placements
+        if let start = pressed, windowServer.active, sentSomething || motion.isMoving {
+            pressed = nil
+            latency = String(format: "Keypress to first motion: %.1f ms", (CFAbsoluteTimeGetCurrent() - start) * 1000)
+        }
         updateRing(at: now)
         onChange()
+    }
+
+    /// Apps measure a resize from where they last heard their window was, and window server moves never tell them,
+    /// so a window resized mid-flight comes out clamped to the screen. It takes its new size and height where it
+    /// stands, and slides once the app has answered.
+    func resizeInPlace(_ id: WindowID, from: CGRect, to: CGRect, monitor: Int, springs: Motion.Springs) -> Bool {
+        guard windowServer.active, wins[id]?.windowID != 0, from.size != to.size, swipe?.axis != .horizontal else { return false }
+        let here = CGRect(x: from.minX, y: to.minY, width: to.width, height: to.height)
+        let screen = world.place(here, on: monitor).frame
+        guard world.monitors.contains(where: { $0.screen.contains(screen) }) else { return false }
+        motion.stop(id, at: (here, monitor))
+        resizing[id] = (to, monitor, springs)
+        // The app moves its own window as it resizes; a compositor move first would show the old size in the new spot.
+        sendAccessibility(id, screen, verify: true, force: true)
+        return true
     }
 
     func springs(from: CGRect, to: CGRect, monitor: Int, views: [Double]) -> Motion.Springs? {
@@ -339,19 +414,35 @@ final class WindowManager {
             && abs((from.minX + lastViews[monitor]) - (to.minX + views[monitor])) < 1 && from.minY == to.minY
         guard let position = a.spring(scrolled ? .horizontalViewMovement : .windowMovement) else { return nil }
         let resized = from.size != to.size
-        guard let size = resized ? a.spring(.windowResize) : position else { return nil }
+        guard let size = resized && (!windowServer.active || windowServer.liveScenes) ? a.spring(.windowResize) : position else { return nil }
         return Motion.Springs(position: position, size: size, slowdown: a.slowdown)
     }
 
     func tick(at now: CFTimeInterval) {
         guard !paused else { return motion.cancel() }
+        var sceneFrames: [UInt32: [WindowID: CGRect]] = [:]
         for f in motion.frames(at: now)
             where world.monitors.indices.contains(f.monitor) {
-            send(id: f.id, world.place(f.frame, on: f.monitor).frame, verify: f.last)
+            if windowServer.active, wins[f.id]?.windowID != 0 {
+                // The compositor presents the flight; landing is where Accessibility hears where the window is.
+                if f.last, compositor.standIn(f.id) == nil { send(id: f.id, world.place(f.frame, on: f.monitor).frame, verify: true) }
+            } else {
+                send(id: f.id, world.place(f.frame, on: f.monitor).frame, verify: f.last)
+            }
+            let monitor = world.monitors[f.monitor]
+            if windowServer.liveScenes, scenes[monitor.id]?.isVisible == true {
+                let shown = refusals[f.id]?.apply(to: f.frame) ?? f.frame
+                sceneFrames[monitor.id, default: [:]][f.id] = shown.offsetBy(dx: -monitor.area.minX, dy: -monitor.area.minY)
+            }
         }
+        for (display, frames) in sceneFrames { scenes[display]?.setFrames(frames) }
         updateRing(at: now)
-        if !motion.isMoving, let summary = motion.summary() {
-            smoothness = summary
+        if !motion.isMoving {
+            if let summary = motion.summary() {
+                smoothness = windowServer.active
+                    ? String(format: "WindowServer commit: %.2f ms average, %.2f ms peak", windowServer.meanCommitMS, windowServer.maxCommitMS)
+                    : summary
+            }
             onChange()
             scheduleWarmup()
         }
@@ -360,7 +451,14 @@ final class WindowManager {
     func send(_ id: WindowID, _ frame: CGRect) { send(id: id, frame, verify: true) }
 
     func send(id: WindowID, _ frame: CGRect, verify: Bool) {
-        guard let win = wins[id], applied[id] != frame || verify && !verified.contains(id) else { return }
+        if windowServer.active, wins[id]?.windowID != 0 {
+            return sendThroughServer(id, frame, verify: verify)
+        }
+        sendAccessibility(id, frame, verify: verify)
+    }
+
+    func sendAccessibility(_ id: WindowID, _ frame: CGRect, verify: Bool, force: Bool = false) {
+        guard let win = wins[id], force || applied[id] != frame || verify && !verified.contains(id) else { return }
         let resize = applied[id]?.size != frame.size || verify && !verified.contains(id)
         applied[id] = frame
         if verify { verified.insert(id) } else if resize { verified.remove(id) }
@@ -369,12 +467,17 @@ final class WindowManager {
         let gen = (generation[id] ?? 0) + 1
         generation[id] = gen
         unlanded.insert(id)
-        win.worker.apply(id, win.element, frame, resize: resize, verify: verify, measured: { [weak self] id, size in
-            guard let self else { return }
+        win.worker.apply(id, win.element, frame, resize: resize, verify: verify, placed: windowServer.active && win.windowID != 0,
+                         measured: { [weak self] id, size in
+            guard let self, wins[id] != nil, applied[id]?.size == frame.size else { return }
             refusals[id] = abs(size.height - frame.height) > 1 ? Refusal(asked: frame.size, got: size) : nil
             if abs(size.width - frame.width) > 1 { appRefused(width: size.width, for: id) }
         }, done: { [weak self] in
-            self?.placed(id, generation: gen)
+            guard let self else { return }
+            compositor.answered(id, frame)
+            // In step only if Accessibility was told where the window is; a resize asked off to the side isn't.
+            if generation[id] == gen, compositor.standIn(id) == nil, applied[id] == frame { serverUnsynced.remove(id) }
+            placed(id, generation: gen)
         })
     }
 
@@ -389,12 +492,13 @@ final class WindowManager {
 
     func shownFrame(_ id: WindowID, at now: CFTimeInterval) -> CGRect? {
         if let g = grab, g.window == id, !g.resize, !g.floating { return g.current }
+        if let standIn = compositor.standIn(id) { return standIn.shown }
         let moving = motion.current(id, at: now)
         let p = moving.map { world.place($0.frame.roundedToPoints, on: $0.monitor) } ?? targets[id]
         guard p?.visible == true, var frame = p?.frame else { return nil }
         // Mid-motion the ring follows the window as the window server shows it: apps apply tegi's orders a few frames
         // late, and report them done before they're on screen, so either would leave the ring around empty space.
-        if motion.isFlying(id), let wid = wins[id]?.windowID {
+        if !windowServer.active, motion.isFlying(id), let wid = wins[id]?.windowID {
             guard let at = onScreen(wid), world.monitors.contains(where: { $0.screen.intersection(at).width > 40 }) else { return nil }
             frame = at
         }
@@ -419,16 +523,21 @@ final class WindowManager {
                 frame = shown(id)
             }
             return FocusRing.Target(display: mon.id, screen: mon.screen, frame: frame, active: m == world.focusedMonitor,
-                                    radius: ws.activeWindow.map(cornerRadius) ?? 0)
+                                    radius: ws.activeWindow.map(cornerRadius) ?? 0, window: ws.activeWindow.flatMap { wins[$0]?.windowID } ?? 0)
         }
         ring.update(rings, tabs: tabs, config: config)
     }
 
     func placed(_ id: WindowID, generation gen: Int) {
-        if generation[id] == gen {
-            unlanded.remove(id)
-            if !hideWhenLanded.isEmpty { hideLandedScenes() }
+        if windowServer.active, !paused { compositor.reassert(id) }
+        guard generation[id] == gen else { return }
+        unlanded.remove(id)
+        if let r = resizing.removeValue(forKey: id), let from = motion.current(id, at: motion.clock),
+           motion.move(id, from: from.frame, to: r.to, monitor: r.monitor, at: max(CACurrentMediaTime(), motion.clock),
+                       springs: r.springs, animateSize: false) {
+            motion.run { [weak self] t in self?.tick(at: t) }
         }
+        if !hideWhenLanded.isEmpty { hideLandedScenes() }
         if let start = pressed {
             pressed = nil
             latency = String(format: "Keypress to first motion: %.1f ms", (CFAbsoluteTimeGetCurrent() - start) * 1000)
@@ -496,6 +605,7 @@ final class WindowManager {
         ids[win.element] = nil
         applied[id] = nil
         refusals[id] = nil
+        forced[id] = nil
         drift[id] = nil
         strays.removeValue(forKey: id)?.cancel()
         verified.remove(id)
@@ -508,6 +618,9 @@ final class WindowManager {
         if focused == id { focused = nil }
         recent.forget(id)
         snapshots.forget(id)
+        serverUnsynced.remove(id)
+        resizing[id] = nil
+        compositor.endStandIn(id)
     }
 
     func handle(_ worker: AppWorker, _ el: AXUIElement, _ event: AppWorker.Event) {
@@ -538,6 +651,9 @@ final class WindowManager {
         case .restored:
             suspend(win, false)
         case .moved, .resized:
+            if event == .resized, NSEvent.pressedMouseButtons & 1 == 0 { sizeChanged(id) }
+            // The compositor placed it; an app moving it, often to keep a parked window on screen, is put back.
+            if serverUnsynced.contains(id), NSEvent.pressedMouseButtons & 1 == 0 { return compositor.reassert(id) }
             if win.floating { return floatingMoved(win) }
             let mouseDown = NSEvent.pressedMouseButtons & 1 != 0
             guard grab?.window != id else { return }
@@ -618,6 +734,7 @@ final class WindowManager {
             world.focus(id, config: config)
         }
         relayout()
+        if !win.floating { restack() }
     }
 
     func focusWindow(_ id: WindowID) {
@@ -688,7 +805,8 @@ final class WindowManager {
         let placements = world.layout(config: config)
         func window(_ id: WindowID) -> [String: Any] {
             guard let win = wins[id] else { return ["id": id] }
-            var out: [String: Any] = ["id": id, "app": win.worker.name, "bundle_id": win.worker.bundleID ?? NSNull(),
+            var out: [String: Any] = ["id": id, "window_id": win.windowID,
+                                      "compositor_origin": compositor.origin(of: id).map { [$0.x, $0.y] } ?? NSNull(), "app": win.worker.name, "bundle_id": win.worker.bundleID ?? NSNull(),
                                       "title": win.title, "floating": win.floating, "focused": focused == id]
             if let p = placements[id] {
                 out["frame"] = [p.frame.minX, p.frame.minY, p.frame.width, p.frame.height]
@@ -701,6 +819,13 @@ final class WindowManager {
             return out
         }
         return [
+            "motion_problem": windowServer.problem ?? NSNull(),
+            "window_server_connection": WindowServer.connectionID,
+            "overview": overview,
+            "animating": motion.isMoving || scenes.values.contains(where: \.isAnimating),
+            "compositor": ["frames": windowServer.frames, "presented": compositor.frames.presented, "missed": compositor.frames.missed,
+                           "mean_commit_ms": windowServer.meanCommitMS,
+                           "max_commit_ms": windowServer.maxCommitMS, "live_previews": windowServer.liveScenes],
             "timing": timing ?? NSNull(),
             "paused": paused,
             "focused_monitor": world.focusedMonitor,

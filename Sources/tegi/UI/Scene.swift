@@ -13,6 +13,7 @@ final class Scene: NSObject {
         var depth: CGFloat = 0
         var image: IOSurface?
         var icon: NSImage?
+        var liveWindow: CGWindowID?
     }
 
     typealias Content = [[Window]]
@@ -31,6 +32,7 @@ final class Scene: NSObject {
     private var workspaces: [WorkspaceLayers] = []
     private var cards: [WindowID: CALayer] = [:]
     private var depths: [WindowID: CGFloat] = [:]
+    private var liveWindows: [WindowID: CGWindowID] = [:]
     private let ring = CALayer()
     private let hint = CALayer()
     private let backdrop = CALayer()
@@ -44,13 +46,16 @@ final class Scene: NSObject {
     private var wallpaper: Any?
     private let wallpaperFrame: CGRect
     private let config: Config
+    private let live: Bool
     private var drag: (id: WindowID, start: CGPoint, offset: CGPoint, moving: Bool, home: CALayer?, frame: CGRect)?
     private(set) var inOverview = false
     private var tracking = false
 
     var isSettled: Bool { link == nil && !tracking && !inOverview }
+    var isAnimating: Bool { link != nil }
 
     var onFinished: () -> Void = {}
+    var onSettled: () -> Void = {}
     var onPick: (WindowID) -> Void = { _ in }
     var onPickWorkspace: (Int) -> Void = { _ in }
     var onScroll: (NSEvent) -> Void = { _ in }
@@ -59,11 +64,12 @@ final class Scene: NSObject {
     var onDrop: (_ id: WindowID, _ workspace: Int, _ point: CGPoint) -> Void = { _, _, _ in }
     var onDropBetween: (_ id: WindowID, _ index: Int) -> Void = { _, _ in }
 
-    init(area: CGRect, screen: CGRect, wallpaper: Any?, paper: IOSurface?, config: Config) {
+    init(area: CGRect, screen: CGRect, wallpaper: Any?, paper: IOSurface?, config: Config, live: Bool = false) {
         size = area.size
         self.wallpaper = wallpaper
         wallpaperFrame = CGRect(x: screen.minX - area.minX, y: screen.minY - area.minY, width: screen.width, height: screen.height)
         self.config = config
+        self.live = live
         index = Spring(from: 0, to: 0, start: 0)
         zoom = Spring(from: 1, to: 1, start: 0)
         panel = ScenePanel(contentRect: area, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
@@ -219,7 +225,21 @@ final class Scene: NSObject {
                     move(card, to: flip(win.frame), animated: animated)
                 }
                 card.zPosition = win.depth
-                if let image = win.image, card.contents == nil { setContents(image, of: card) }
+                if liveWindows[win.id] != win.liveWindow {
+                    card.sublayers?.filter { $0.name == "live" }.forEach { $0.removeFromSuperlayer() }
+                    liveWindows[win.id] = nil
+                }
+                if let window = win.liveWindow, liveWindows[win.id] == nil, let live = LiveWindowLayer.make(window) {
+                    card.contents = nil
+                    card.backgroundColor = nil
+                    card.sublayers?.filter { $0 !== ring && $0.name != "badge" }.forEach { $0.removeFromSuperlayer() }
+                    live.frame = card.bounds
+                    live.autoresizingMask = [.layerWidthSizable, .layerHeightSizable]
+                    card.insertSublayer(live, at: 0)
+                    liveWindows[win.id] = window
+                } else if win.liveWindow == nil, let image = win.image, card.contents == nil {
+                    setContents(image, of: card)
+                }
                 card.cornerRadius = win.radius
                 if let color = win.ring { wear(color, card, radius: win.radius) }
             }
@@ -228,6 +248,7 @@ final class Scene: NSObject {
             card.removeFromSuperlayer()
             cards[id] = nil
             depths[id] = nil
+            liveWindows[id] = nil
         }
         CATransaction.commit()
     }
@@ -235,12 +256,24 @@ final class Scene: NSObject {
     private func wear(_ color: Color, _ card: CALayer, radius: Double) {
         ring.borderColor = cgColor(color)
         ring.cornerRadius = radius + config.focusRingWidth
+        ring.cornerCurve = .continuous
         ring.frame = card.bounds.insetBy(dx: -config.focusRingWidth, dy: -config.focusRingWidth)
         card.addSublayer(ring)
     }
 
+    func setFrames(_ frames: [WindowID: CGRect]) {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        for (id, frame) in frames {
+            guard let card = cards[id], drag?.id != id || drag?.moving != true else { continue }
+            move(card, to: flip(frame), animated: false)
+            if ring.superlayer === card { ring.frame = card.bounds.insetBy(dx: -config.focusRingWidth, dy: -config.focusRingWidth) }
+        }
+        CATransaction.commit()
+    }
+
     func setContents(_ contents: IOSurface, for id: WindowID) {
-        guard let card = cards[id] else { return }
+        guard liveWindows[id] == nil, let card = cards[id] else { return }
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         setContents(contents, of: card)
@@ -257,6 +290,7 @@ final class Scene: NSObject {
         let card = CALayer()
         card.contentsGravity = .resize
         card.cornerRadius = win.radius
+        card.cornerCurve = .continuous
         card.masksToBounds = false
         card.name = String(win.id)
         if config.overviewIcons, let icon = win.icon {
@@ -293,8 +327,12 @@ final class Scene: NSObject {
     private func flip(_ r: CGRect) -> CGRect { CGRect(x: r.minX, y: size.height - r.maxY, width: r.width, height: r.height) }
 
     private func move(_ card: CALayer, to frame: CGRect, animated: Bool) {
+        if !animated || live {
+            card.removeAnimation(forKey: "position")
+            card.removeAnimation(forKey: "bounds.size")
+        }
         guard card.frame != frame else { return }
-        if animated && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion, let p = config.animations.spring(.windowMovement) {
+        if animated && !live && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion, let p = config.animations.spring(.windowMovement) {
             let now = card.presentation() ?? card
             let k = config.animations.slowdown
             for (key, from, to) in [("position", NSValue(point: now.position), NSValue(point: CGPoint(x: frame.midX, y: frame.midY))),
@@ -320,7 +358,8 @@ final class Scene: NSObject {
 
     private func spring(_ current: Spring, to target: Double, _ name: Animations.Name, velocity: Double? = nil) -> Spring {
         let now = CACurrentMediaTime()
-        guard let params = config.animations.spring(name) else { return Spring(from: target, to: target, start: now) }
+        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion,
+              let params = config.animations.spring(name) else { return Spring(from: target, to: target, start: now) }
         return Spring(from: current.value(at: now), to: target, velocity: velocity ?? current.velocity(at: now), start: now,
                       params: params, slowdown: config.animations.slowdown)
     }
@@ -382,7 +421,7 @@ final class Scene: NSObject {
 
     private func run() {
         guard link == nil else { return }
-        anchor = CACurrentMediaTime() - 0.05
+        anchor = live ? nil : CACurrentMediaTime() - 0.05
         let link = panel.displayLink(target: self, selector: #selector(step))
         link.add(to: .main, forMode: .common)
         self.link = link
@@ -402,6 +441,7 @@ final class Scene: NSObject {
             self.link?.invalidate()
             self.link = nil
             if !inOverview && !tracking { onFinished() }
+            onSettled()
         }
     }
 

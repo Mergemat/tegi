@@ -74,6 +74,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         reloadConfig()
         let wm = WindowManager(config: config ?? .builtIn)
         wm.onChange = { [weak self] in
+            if let self { settingsModel.motionProblem = self.wm?.windowServer.problem }
             self?.refresh()
             self?.queueEvent()
         }
@@ -171,6 +172,11 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return data.map { String(decoding: $0, as: UTF8.self) } ?? "error: couldn't encode state"
         case "event-stream":
             return compactState() ?? "error: couldn't encode state"
+        case "window-server-authorized":
+            guard words.count == 2, let connection = Int32(words[1]), wm.windowServer.acceptAuthorization(connection: connection) else {
+                return "error: WindowServer connection changed"
+            }
+            return "ok"
         case "action":
             guard let command = Command(words.dropFirst()) else {
                 return "error: unknown action \(words.dropFirst().joined(separator: " "))"

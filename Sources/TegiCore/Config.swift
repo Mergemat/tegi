@@ -99,6 +99,7 @@ public struct Animations: Equatable {
     }
 
     public var on = true
+    public var windowServer = false
     public var slowdown = 1.0
     public var springs: [Name: SpringParams] = [
         .horizontalViewMovement: .view, .windowMovement: .view, .windowResize: .view,
@@ -333,6 +334,12 @@ public struct Config: Equatable {
                 case "on": config.animations.on = true
                 case "off": config.animations.on = false
                 default: throw fail("animations is on or off")
+                }
+            case "window-server-motion":
+                switch try one() {
+                case "on": config.animations.windowServer = true
+                case "off": config.animations.windowServer = false
+                default: throw fail("window-server-motion is on or off")
                 }
             case "animation-slowdown":
                 config.animations.slowdown = try number(0.05...20, "animation-slowdown must be between 0.05 and 20")
@@ -621,6 +628,10 @@ public struct Config: Equatable {
 
     # Off, or with macOS's Reduce Motion, windows jump into place.
     animations on
+
+    # Smoother motion and a live overview: windows move through the window server
+    # every display frame. Needs SIP off; if macOS refuses, they move the standard way.
+    window-server-motion off
 
     # Stretches every animation: 2 is twice as slow, 0.5 twice as fast.
     animation-slowdown 1

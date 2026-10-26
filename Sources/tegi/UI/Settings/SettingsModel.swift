@@ -10,6 +10,7 @@ final class SettingsModel: ObservableObject {
     @Published private(set) var live: Config?
     /// Counts saves, so the mascot can react to each one.
     @Published private(set) var saves = 0
+    @Published var motionProblem: String?
     private var pending: DispatchWorkItem?
     @Published private var text = ""
     let url: URL

@@ -69,6 +69,15 @@ import Testing
     }
 }
 
+@Test func windowServerMotionIsOptionalAndRejectsUnknownModes() throws {
+    #expect(!Config.builtIn.animations.windowServer)
+    #expect(try Config.parse("window-server-motion on").animations.windowServer)
+    #expect(!(try Config.parse("window-server-motion off")).animations.windowServer)
+    #expect(throws: ConfigError(line: 1, message: "window-server-motion is on or off")) {
+        try Config.parse("window-server-motion auto")
+    }
+}
+
 @Test func aConfigWrittenBeforeABindingExistedStillGetsIt() throws {
     let old = try Config.parse("gap 12\nbind alt+h focus-column-left")
     #expect(old.binds[KeyCombo("alt+o")!] == .toggleOverview)

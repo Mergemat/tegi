@@ -43,6 +43,7 @@ extension WindowManager {
             if let m = monitor(containing: frame), let home = activeWorkspaceID(on: m), home != win.floatHome {
                 win.floatHome = home
             }
+            updateLiveFloating(win)
         }
     }
 
@@ -174,5 +175,43 @@ extension WindowManager {
     private func place(_ id: WindowID) -> (monitor: Int, workspace: Int)? {
         if let home = wins[id]?.floatHome, wins[id]?.floating == true { return world.find(workspace: home).map { ($0.monitor, $0.index) } }
         return world.locate(id).map { ($0.monitor, $0.workspace) }
+    }
+
+    /// Like niri, windows that aren't tiled stay above the tiles: floating ones, and the ones tegi leaves alone, such
+    /// as an app's onboarding panel. macOS raises a tile above them when it takes focus, so they go back on top.
+    func keepFloatingOnTop() {
+        guard windowServer.liveScenes else { return }
+        let tiled = Set(wins.values.filter { !$0.floating && !$0.suspended && $0.windowID != 0 }.map(\.windowID))
+        let me = getpid()
+        let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
+        let screens = world.monitors.map(\.screen)
+        // Front to back.
+        let windows = list.compactMap { w -> (id: CGWindowID, tiled: Bool, floats: Bool)? in
+            guard w[kCGWindowLayer as String] as? Int == 0, let id = w[kCGWindowNumber as String] as? CGWindowID,
+                  w[kCGWindowOwnerPID as String] as? pid_t != me,
+                  let b = w[kCGWindowBounds as String] as? NSDictionary, let frame = CGRect(dictionaryRepresentation: b) else { return nil }
+            // Invisible and screen-sized windows would catch clicks meant for the tiles.
+            let alpha = w[kCGWindowAlpha as String] as? Double ?? 1
+            let floats = alpha > 0 && frame.width >= 100 && frame.height >= 60 && !screens.contains { frame.contains($0) }
+            return (id, tiled.contains(id), floats)
+        }
+        guard let top = windows.firstIndex(where: \.tiled),
+              windows[(top + 1)...].contains(where: { !$0.tiled && $0.floats }) else { return }
+        var above = windows[top].id
+        for w in windows.reversed() where !w.tiled && w.floats {
+            windowServer.raise(w.id, above: above)
+            above = w.id
+        }
+    }
+
+    /// After macOS raises a tile, which apps finish doing after tegi hears they took focus: the ring and the windows that
+    /// float go back above it.
+    func restack() {
+        keepFloatingOnTop()
+        ring.restack()
+    }
+
+    func watchTileOrder() {
+        WindowServer.watchOrder(of: wins.values.filter { !$0.floating && !$0.suspended && $0.windowID != 0 }.map(\.windowID))
     }
 }

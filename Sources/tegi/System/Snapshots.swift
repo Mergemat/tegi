@@ -55,9 +55,16 @@ final class Snapshots {
         return surface
     }
 
-    private static func measure(_ surface: IOSurface) -> (radius: Double?, blank: Bool) {
-        surface.lock(options: .readOnly, seed: nil)
+    static func measure(_ surface: IOSurface) -> (radius: Double?, blank: Bool) {
+        guard surface.lock(options: .readOnly, seed: nil) == KERN_SUCCESS else { return (nil, false) }
         defer { surface.unlock(options: .readOnly, seed: nil) }
+        // Captures can be GPU-only or use a different pixel layout despite the requested format.
+        // An unreadable surface says nothing about whether the source window is invisible.
+        guard surface.pixelFormat == kCVPixelFormatType_32BGRA,
+              surface.width > 0, surface.height > 0,
+              surface.width <= surface.bytesPerRow / 4,
+              surface.bytesPerRow <= surface.allocationSize / surface.height,
+              Int(bitPattern: surface.baseAddress) != 0 else { return (nil, false) }
         let base = surface.baseAddress.assumingMemoryBound(to: UInt8.self), row = surface.bytesPerRow
         let alpha = { (x: Int, y: Int) in base[y * row + x * 4 + 3] }
         return (Corners.radius(width: surface.width, height: surface.height, alpha: alpha),

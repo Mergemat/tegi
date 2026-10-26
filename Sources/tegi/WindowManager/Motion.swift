@@ -10,6 +10,9 @@ final class Motion: NSObject {
     }
 
     private var flights: [WindowID: Flight] = [:]
+    /// Each change to what's flying, for the compositor to present. Flights that land aren't announced: it lands them
+    /// itself, on the same springs.
+    var onFlights: ([WindowID: Flight]) -> Void = { _ in }
     private var resting: [WindowID: (frame: CGRect, monitor: Int)] = [:]
     private var link: CADisplayLink?
     private var onFrame: (CFTimeInterval) -> Void = { _ in }
@@ -28,34 +31,47 @@ final class Motion: NSObject {
     }
 
     func move(_ id: WindowID, from: CGRect, to: CGRect, monitor: Int, at t: Double, velocity: Double? = nil,
-              springs: Springs) -> Bool {
+              springs: Springs, animateSize: Bool = true) -> Bool {
         if var f = flights[id] {
             if f.target != to { f.retarget(to: to, at: t) }
-            if let velocity { f.x.velocity = velocity }
+            if let velocity {
+                f.x = Spring(from: f.x.value(at: t), to: to.minX, velocity: velocity, start: t,
+                             params: f.x.params, slowdown: f.x.slowdown)
+            }
+            if !animateSize {
+                f.w = Spring(from: to.width, to: to.width, start: t)
+                f.h = Spring(from: to.height, to: to.height, start: t)
+            }
             flights[id] = f
+            onFlights(flights)
             return true
         }
         guard from != to else { return false }
-        flights[id] = Flight(from: from, to: to, monitor: monitor, velocity: velocity, at: t,
+        let origin = animateSize ? from : CGRect(origin: from.origin, size: to.size)
+        flights[id] = Flight(from: origin, to: to, monitor: monitor, velocity: velocity, at: t,
                              position: springs.position, size: springs.size, slowdown: springs.slowdown)
         resting[id] = nil
         if stats == nil { stats = (0, t, [:]) }
+        onFlights(flights)
         return true
     }
 
     func stop(_ id: WindowID, at rest: (CGRect, Int)?) {
-        flights[id] = nil
+        if flights.removeValue(forKey: id) != nil { onFlights(flights) }
         resting[id] = rest
     }
 
     func forget(where gone: (WindowID) -> Bool) {
+        let before = flights.count
         for id in flights.keys where gone(id) { flights[id] = nil }
         for id in resting.keys where gone(id) { resting[id] = nil }
+        if flights.count != before { onFlights(flights) }
     }
 
     func cancel() {
         for (id, f) in flights { resting[id] = (f.target, f.monitor) }
         flights = [:]
+        onFlights(flights)
         stopLink()
     }
 

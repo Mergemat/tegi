@@ -8,6 +8,7 @@ let package = Package(
         .target(name: "TegiCore"),
         .executableTarget(name: "tegi", dependencies: ["TegiCore"]),
         .testTarget(name: "TegiCoreTests", dependencies: ["TegiCore"]),
+        .testTarget(name: "TegiAppTests", dependencies: ["tegi"]),
     ],
     swiftLanguageModes: [.v5]
 )

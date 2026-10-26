@@ -60,12 +60,23 @@ extension AXUIElement {
             title: ok(values[7]) as? String ?? "")
     }
 
-    func setFrame(_ frame: CGRect, resize: Bool, verify: Bool) -> CGSize? {
+    /// `placed`: the window already shows at `frame`'s origin, or is out of sight, because the compositor put it there.
+    func setFrame(_ frame: CGRect, resize: Bool, verify: Bool, placed: Bool = false) -> CGSize? {
         var origin = frame.origin, size = frame.size
         let p = AXValueCreate(.cgPoint, &origin)!, s = AXValueCreate(.cgSize, &size)!
         guard resize else {
             set(kAXPositionAttribute, p)
             return nil
+        }
+        // macOS measures a resize from where the app last heard its window was, and compositor moves never tell it.
+        // Telling it the place first lets the size through unclamped, so the app lays out and draws once.
+        if placed {
+            set(kAXPositionAttribute, p)
+            set(kAXSizeAttribute, s)
+            guard verify, let v = value(kAXSizeAttribute) else { return nil }
+            var actual = CGSize.zero
+            AXValueGetValue(v as! AXValue, .cgSize, &actual)
+            return actual
         }
         guard verify else {
             set(kAXSizeAttribute, s)
@@ -103,6 +114,8 @@ final class AppWorker {
         var frame: CGRect
         var resize: Bool
         var verify: Bool
+        var position: Bool
+        var placed: Bool
         var measured: (WindowID, CGSize) -> Void
         var done: () -> Void
     }
@@ -193,14 +206,27 @@ final class AppWorker {
     }
 
     func apply(_ id: WindowID, _ window: AXUIElement, _ frame: CGRect, resize: Bool, verify: Bool = true,
+               position: Bool = true, placed: Bool = false,
                measured: @escaping (WindowID, CGSize) -> Void, done: @escaping () -> Void) {
         lock.lock()
         let resize = resize || pending[id]?.resize == true
-        pending[id] = Job(window: window, frame: frame, resize: resize, verify: verify, measured: measured, done: done)
+        pending[id] = Job(window: window, frame: frame, resize: resize, verify: verify, position: position, placed: placed, measured: measured, done: done)
         let start = !draining
         draining = true
         lock.unlock()
         if start { queue.async { [self] in drain() } }
+    }
+
+    func cancelPosition(_ id: WindowID) {
+        lock.lock()
+        defer { lock.unlock() }
+        guard var job = pending[id], job.position else { return }
+        if job.resize {
+            job.position = false
+            pending[id] = job
+        } else {
+            pending[id] = nil
+        }
     }
 
     private func drain() {
@@ -219,7 +245,18 @@ final class AppWorker {
             }
         }
         for (id, job) in jobs {
-            let actual = job.window.setFrame(job.frame, resize: job.resize, verify: job.verify)
+            let actual: CGSize?
+            if job.position {
+                actual = job.window.setFrame(job.frame, resize: job.resize, verify: job.verify, placed: job.placed)
+            } else {
+                var size = job.frame.size
+                job.window.set(kAXSizeAttribute, AXValueCreate(.cgSize, &size)!)
+                if let value = job.window.value(kAXSizeAttribute), AXValueGetValue(value as! AXValue, .cgSize, &size) {
+                    actual = size
+                } else {
+                    actual = nil
+                }
+            }
             DispatchQueue.main.async {
                 if let actual { job.measured(id, actual) }
                 job.done()

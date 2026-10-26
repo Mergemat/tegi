@@ -24,6 +24,18 @@ rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp "$bin" "$app/Contents/MacOS/tegi"
 cp Resources/AppIcon.icns Resources/Assets.car "$app/Contents/Resources/"
+helper_arch="-arch $(uname -m)"
+[ "$(uname -m)" = arm64 ] && helper_arch="-arch arm64e"
+[ "$UNIVERSAL" = 1 ] && helper_arch="-arch arm64e -arch x86_64"
+clang $helper_arch -mmacosx-version-min=14.0 -O2 \
+    Helpers/WindowServer/Loader.m Helpers/WindowServer/Stub.S -framework Cocoa \
+    -o "$app/Contents/Resources/tegi-dock-loader"
+clang $helper_arch -mmacosx-version-min=14.0 -O2 -dynamiclib \
+    Helpers/WindowServer/Grant.c -F /System/Library/PrivateFrameworks -framework SkyLight -framework CoreGraphics \
+    -o "$app/Contents/Resources/tegi-grant.dylib"
+cp Helpers/WindowServer/LICENSE.yabai "$app/Contents/Resources/"
+codesign --force --sign "${SIGN_IDENTITY:--}" "$app/Contents/Resources/tegi-dock-loader"
+codesign --force --sign "${SIGN_IDENTITY:--}" "$app/Contents/Resources/tegi-grant.dylib"
 cat > "$app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

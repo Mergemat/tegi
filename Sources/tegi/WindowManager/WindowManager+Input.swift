@@ -139,10 +139,11 @@ extension WindowManager {
         let m = s.monitor
         guard world.monitors.indices.contains(m) else { return }
         if s.startIndex == nil {
-            guard config.animations.spring(.workspaceSwitch) != nil, snapshots.allowed, let scene = scene(for: m) else { return }
+            guard config.animations.spring(.workspaceSwitch) != nil, snapshots.allowed || windowServer.liveScenes,
+                  let scene = scene(for: m) else { return }
             s.startIndex = world.monitors[m].active
             if !scene.isVisible {
-                let content = sceneContent(m)
+                let content = sceneContent(m, current: windowServer.liveScenes)
                 scene.show(content, at: Double(world.monitors[m].active))
                 refreshSnapshots(content.flatMap { $0.map(\.id) })
             }

@@ -45,6 +45,8 @@ swift test                   # layout, config, keys and spring tests
 swift scripts/social.swift   # redraw the sharing images, og.png and social.png
 ```
 
+Direct window motion (Settings → Motion, or `window-server-motion on`) moves windows through the window server on every display frame and shows them live in the overview. It needs SIP off. Live windows ask for your password once per launch to load a small Dock helper, which unloads right after granting tegi access; the grant ends when tegi quits. If macOS refuses, windows move the standard way and Settings says why. `tegi msg state` includes commit timings.
+
 - `Sources/TegiCore` is the layout model, config parser and springs: plain Swift with no macOS window APIs, so it's what the tests cover.
 - `Sources/tegi` is the app. `WindowManager/` applies the model to real windows and animates them; `System/` wraps macOS (Accessibility, input, hotkeys, screen capture, the IPC socket); `UI/` is what tegi draws itself (overview and slides, focus ring, switcher, cheat sheet, banners) and the Settings and welcome windows.
 - `tegi msg event-stream` and `tegi msg state` are the quickest way to see what tegi thinks the layout is.

@@ -1,5 +1,19 @@
+import QuartzCore
 import Testing
 @testable import TegiCore
+
+// A window picture's alpha as macOS draws one: opaque inside a rectangle with continuous corners of radius r.
+private func continuous(_ w: Int, _ h: Int, _ r: Double) -> (Int, Int) -> UInt8 {
+    let layer = CALayer()
+    layer.frame = CGRect(x: 0, y: 0, width: w, height: h)
+    layer.backgroundColor = CGColor(gray: 1, alpha: 1)
+    layer.cornerRadius = r
+    layer.cornerCurve = .continuous
+    let context = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4, space: CGColorSpaceCreateDeviceRGB(),
+                            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+    layer.render(in: context)
+    return { x, y in context.data!.assumingMemoryBound(to: UInt8.self)[(y * w + x) * 4 + 3] }
+}
 
 // A window picture's alpha: opaque inside a rectangle with circular corners of radius r.
 private func rounded(_ w: Int, _ h: Int, _ r: Double) -> (Int, Int) -> UInt8 {
@@ -12,8 +26,8 @@ private func rounded(_ w: Int, _ h: Int, _ r: Double) -> (Int, Int) -> UInt8 {
 
 @Test func aWindowsCornerRadiusIsReadFromItsPicture() {
     for r in [10.0, 16, 26, 32] {
-        let measured = Corners.radius(width: 400, height: 300, alpha: rounded(400, 300, r))
-        #expect(abs((measured ?? 0) - r) <= 1.5, "radius \(r) measured \(String(describing: measured))")
+        let measured = Corners.radius(width: 400, height: 300, alpha: continuous(400, 300, r))
+        #expect(abs((measured ?? 0) - r) <= 0.5, "radius \(r) measured \(String(describing: measured))")
     }
 }
 
