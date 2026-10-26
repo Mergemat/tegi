@@ -218,7 +218,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
-        for line in problems + [wm?.timing].compactMap({ $0 }) {
+        for line in problems {
             menu.addItem(NSMenuItem(title: line, action: nil, keyEquivalent: ""))
         }
         if wm?.threeFingerConflict == true {
@@ -244,7 +244,6 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         menu.addItem(item("Settings…", #selector(showSettingsFromMenu), key: ","))
         menu.addItem(item("Open Config", #selector(openConfig)))
-        menu.addItem(item("Open Defaults", #selector(openDefaults)))
         menu.addItem(.separator())
         menu.addItem(item("Quit tegi", #selector(quitFromMenu), key: "q"))
     }
@@ -297,7 +296,6 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func openConfig() { edit(configURL) }
-    @objc private func openDefaults() { edit(defaultsURL) }
 
     private func edit(_ url: URL) {
         let editor = NSWorkspace.shared.urlForApplication(toOpen: .plainText)
