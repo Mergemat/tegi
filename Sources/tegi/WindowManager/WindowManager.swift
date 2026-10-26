@@ -77,9 +77,9 @@ final class WindowManager {
     let motion = Motion()
     let windowServer: WindowServer
     var serverUnsynced: Set<WindowID> = []
-    var resizing: [WindowID: (to: CGRect, monitor: Int, springs: Motion.Springs)] = [:]
+    /// Windows on a flight that changes their size, which their apps move and resize, as in standard motion.
+    var appSized: Set<WindowID> = []
     let compositor: Compositor
-    var standInPanels: [UInt32: StandIns] = [:]
     var serverAuthorizationAttempted = false
     var serverScenesLive = false
     var targets: [WindowID: Placement] = [:]
@@ -350,35 +350,26 @@ final class WindowManager {
             let changedWorkspace = wereHomes[id].map { $0 != homes[id] } ?? false
             if animate, !changedWorkspace, let to = p.strip, let from = motion.current(id, at: now), from.monitor == p.monitor,
                let springs = springs(from: from.frame, to: to, monitor: p.monitor, views: views) {
-                if compositor.standIn(id) != nil || beginStandIn(id, from: from.frame, to: to, monitor: p.monitor) {
-                    retargetStandIn(id, to: p.frame)
-                    _ = motion.move(id, from: from.frame, to: to, monitor: p.monitor, at: now, springs: springs)
-                    continue
+                // Decided before the flight starts, so the compositor never presents a frame of a flight the app makes.
+                let sized = windowServer.active && wins[id]?.windowID != 0 && (from.frame.size != to.size || appSized.contains(id))
+                if sized {
+                    appSized.insert(id)
+                    serverUnsynced.remove(id)
                 }
-                if resizing[id]?.to.size == to.size {
-                    resizing[id] = (to, p.monitor, springs)
-                    continue
-                }
-                if resizeInPlace(id, from: from.frame, to: to, monitor: p.monitor, springs: springs) { continue }
-                resizing[id] = nil
                 if motion.move(id, from: from.frame, to: to, monitor: p.monitor, at: now,
-                               velocity: fling.flatMap { $0.monitor == p.monitor ? $0.velocity : nil }, springs: springs,
-                               animateSize: !windowServer.active) {
-                    if windowServer.active, wins[id]?.windowID != 0 {
-                        serverUnsynced.insert(id)
-                        if from.frame.size != to.size { requestSize(id, to.size, at: nil) }
-                    }
+                               velocity: fling.flatMap { $0.monitor == p.monitor ? $0.velocity : nil }, springs: springs) {
+                    if windowServer.active, !sized, wins[id]?.windowID != 0 { serverUnsynced.insert(id) }
                     continue
                 }
+                appSized.remove(id)
             }
-            resizing[id] = nil
-            compositor.endStandIn(id)
+            appSized.remove(id)
             motion.stop(id, at: p.strip.map { ($0, p.monitor) })
             send(id, p.frame)
         }
         motion.forget { placements[$0] == nil }
         watchTileOrder()
-        resizing = resizing.filter { placements[$0.key] != nil }
+        appSized = appSized.filter { placements[$0] != nil }
         placeFloating()
         if motion.isMoving {
             tick(at: now)
@@ -393,28 +384,13 @@ final class WindowManager {
         onChange()
     }
 
-    /// Apps measure a resize from where they last heard their window was, and window server moves never tell them,
-    /// so a window resized mid-flight comes out clamped to the screen. It takes its new size and height where it
-    /// stands, and slides once the app has answered.
-    func resizeInPlace(_ id: WindowID, from: CGRect, to: CGRect, monitor: Int, springs: Motion.Springs) -> Bool {
-        guard windowServer.active, wins[id]?.windowID != 0, from.size != to.size, swipe?.axis != .horizontal else { return false }
-        let here = CGRect(x: from.minX, y: to.minY, width: to.width, height: to.height)
-        let screen = world.place(here, on: monitor).frame
-        guard world.monitors.contains(where: { $0.screen.contains(screen) }) else { return false }
-        motion.stop(id, at: (here, monitor))
-        resizing[id] = (to, monitor, springs)
-        // The app moves its own window as it resizes; a compositor move first would show the old size in the new spot.
-        sendAccessibility(id, screen, verify: true, force: true)
-        return true
-    }
-
     func springs(from: CGRect, to: CGRect, monitor: Int, views: [Double]) -> Motion.Springs? {
         let a = config.animations
         let scrolled = lastViews.indices.contains(monitor) && views.indices.contains(monitor)
             && abs((from.minX + lastViews[monitor]) - (to.minX + views[monitor])) < 1 && from.minY == to.minY
         guard let position = a.spring(scrolled ? .horizontalViewMovement : .windowMovement) else { return nil }
         let resized = from.size != to.size
-        guard let size = resized && (!windowServer.active || windowServer.liveScenes) ? a.spring(.windowResize) : position else { return nil }
+        guard let size = resized ? a.spring(.windowResize) : position else { return nil }
         return Motion.Springs(position: position, size: size, slowdown: a.slowdown)
     }
 
@@ -423,9 +399,22 @@ final class WindowManager {
         var sceneFrames: [UInt32: [WindowID: CGRect]] = [:]
         for f in motion.frames(at: now)
             where world.monitors.indices.contains(f.monitor) {
-            if windowServer.active, wins[f.id]?.windowID != 0 {
+            if appSized.contains(f.id) {
+                // The app moves and resizes it, as in standard motion. Landed, the compositor takes it back, and puts it
+                // exactly where it belongs: apps put windows asked to go off screen back on it.
+                let frame = world.place(f.frame, on: f.monitor).frame
+                sendAccessibility(f.id, frame, verify: f.last)
+                if f.last {
+                    appSized.remove(f.id)
+                    compositor.settled(f.id, at: frame.origin)
+                    if !world.monitors.contains(where: { $0.screen.contains(frame) }) {
+                        serverUnsynced.insert(f.id)
+                        compositor.place(f.id, at: frame.origin)
+                    }
+                }
+            } else if windowServer.active, wins[f.id]?.windowID != 0 {
                 // The compositor presents the flight; landing is where Accessibility hears where the window is.
-                if f.last, compositor.standIn(f.id) == nil { send(id: f.id, world.place(f.frame, on: f.monitor).frame, verify: true) }
+                if f.last { send(id: f.id, world.place(f.frame, on: f.monitor).frame, verify: true) }
             } else {
                 send(id: f.id, world.place(f.frame, on: f.monitor).frame, verify: f.last)
             }
@@ -474,9 +463,8 @@ final class WindowManager {
             if abs(size.width - frame.width) > 1 { appRefused(width: size.width, for: id) }
         }, done: { [weak self] in
             guard let self else { return }
-            compositor.answered(id, frame)
             // In step only if Accessibility was told where the window is; a resize asked off to the side isn't.
-            if generation[id] == gen, compositor.standIn(id) == nil, applied[id] == frame { serverUnsynced.remove(id) }
+            if generation[id] == gen, applied[id] == frame { serverUnsynced.remove(id) }
             placed(id, generation: gen)
         })
     }
@@ -492,13 +480,12 @@ final class WindowManager {
 
     func shownFrame(_ id: WindowID, at now: CFTimeInterval) -> CGRect? {
         if let g = grab, g.window == id, !g.resize, !g.floating { return g.current }
-        if let standIn = compositor.standIn(id) { return standIn.shown }
         let moving = motion.current(id, at: now)
         let p = moving.map { world.place($0.frame.roundedToPoints, on: $0.monitor) } ?? targets[id]
         guard p?.visible == true, var frame = p?.frame else { return nil }
         // Mid-motion the ring follows the window as the window server shows it: apps apply tegi's orders a few frames
         // late, and report them done before they're on screen, so either would leave the ring around empty space.
-        if !windowServer.active, motion.isFlying(id), let wid = wins[id]?.windowID {
+        if !windowServer.active || appSized.contains(id), motion.isFlying(id), let wid = wins[id]?.windowID {
             guard let at = onScreen(wid), world.monitors.contains(where: { $0.screen.intersection(at).width > 40 }) else { return nil }
             frame = at
         }
@@ -529,14 +516,10 @@ final class WindowManager {
     }
 
     func placed(_ id: WindowID, generation gen: Int) {
-        if windowServer.active, !paused { compositor.reassert(id) }
+        // While its app moves it, where the app put it is where it is.
+        if windowServer.active, !paused, !appSized.contains(id) { compositor.reassert(id) }
         guard generation[id] == gen else { return }
         unlanded.remove(id)
-        if let r = resizing.removeValue(forKey: id), let from = motion.current(id, at: motion.clock),
-           motion.move(id, from: from.frame, to: r.to, monitor: r.monitor, at: max(CACurrentMediaTime(), motion.clock),
-                       springs: r.springs, animateSize: false) {
-            motion.run { [weak self] t in self?.tick(at: t) }
-        }
         if !hideWhenLanded.isEmpty { hideLandedScenes() }
         if let start = pressed {
             pressed = nil
@@ -619,8 +602,7 @@ final class WindowManager {
         recent.forget(id)
         snapshots.forget(id)
         serverUnsynced.remove(id)
-        resizing[id] = nil
-        compositor.endStandIn(id)
+        appSized.remove(id)
     }
 
     func handle(_ worker: AppWorker, _ el: AXUIElement, _ event: AppWorker.Event) {

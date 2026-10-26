@@ -31,30 +31,27 @@ final class Motion: NSObject {
     }
 
     func move(_ id: WindowID, from: CGRect, to: CGRect, monitor: Int, at t: Double, velocity: Double? = nil,
-              springs: Springs, animateSize: Bool = true) -> Bool {
+              springs: Springs) -> Bool {
         if var f = flights[id] {
             if f.target != to { f.retarget(to: to, at: t) }
             if let velocity {
                 f.x = Spring(from: f.x.value(at: t), to: to.minX, velocity: velocity, start: t,
                              params: f.x.params, slowdown: f.x.slowdown)
             }
-            if !animateSize {
-                f.w = Spring(from: to.width, to: to.width, start: t)
-                f.h = Spring(from: to.height, to: to.height, start: t)
-            }
             flights[id] = f
             onFlights(flights)
             return true
         }
         guard from != to else { return false }
-        let origin = animateSize ? from : CGRect(origin: from.origin, size: to.size)
-        flights[id] = Flight(from: origin, to: to, monitor: monitor, velocity: velocity, at: t,
+        flights[id] = Flight(from: from, to: to, monitor: monitor, velocity: velocity, at: t,
                              position: springs.position, size: springs.size, slowdown: springs.slowdown)
         resting[id] = nil
         if stats == nil { stats = (0, t, [:]) }
         onFlights(flights)
         return true
     }
+
+    func republish() { onFlights(flights) }
 
     func stop(_ id: WindowID, at rest: (CGRect, Int)?) {
         if flights.removeValue(forKey: id) != nil { onFlights(flights) }

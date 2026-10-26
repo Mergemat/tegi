@@ -34,7 +34,10 @@ private final class Server: @unchecked Sendable {
 @MainActor private func manager(_ server: Server) -> WindowManager {
     var config = Config.builtIn
     config.animations.windowServer = true
-    let manager = WindowManager(config: config, windowServer: WindowServer(driver: server.driver))
+    let windowServer = WindowServer(driver: server.driver, settle: 0)
+    windowServer.configure(enabled: true)
+    _ = windowServer.acceptAuthorization(connection: WindowServer.connectionID)
+    let manager = WindowManager(config: config, windowServer: windowServer)
     let element = AXUIElementCreateApplication(getpid())
     let worker = AppWorker(.current) { _, _, _ in }
     for (id, window) in [(1, CGWindowID(99)), (2, CGWindowID(98))] {

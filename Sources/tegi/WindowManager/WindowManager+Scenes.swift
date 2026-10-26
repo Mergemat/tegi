@@ -310,7 +310,6 @@ extension WindowManager {
         for scene in scenes.values { scene.close() }
         scenes = [:]
         hideWhenLanded = []
-        rebuildStandInPanels()
         guard snapshots.allowed || windowServer.liveScenes else { return }
         for m in world.monitors.indices { _ = scene(for: m) }
     }

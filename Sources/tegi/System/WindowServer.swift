@@ -12,14 +12,14 @@ enum LiveWindowLayer {
 
     static var available: Bool { type != nil }
 
-    static func make(_ window: CGWindowID, gravity: String = "resizeAspect") -> CALayer? {
+    static func make(_ window: CGWindowID) -> CALayer? {
         guard let type, window != 0 else { return nil }
         let layer = type.init()
         layer.name = "live"
         layer.setValue("com.apple.WindowServer.CGSWindow", forKey: "pluginType")
         layer.setValue(NSNumber(value: window), forKey: "pluginId")
         layer.setValue(4, forKey: "pluginFlags")
-        layer.setValue(gravity, forKey: "pluginGravity")
+        layer.setValue("resizeAspect", forKey: "pluginGravity")
         return layer
     }
 }
@@ -89,17 +89,29 @@ final class WindowServer {
     private(set) var authorizationFailure: String?
     private var authorizationGranted = false
     var onChange: () -> Void = {}
-    var active: Bool { driver != nil && lock.withLock { enabled && refusal == nil } }
+    /// Turned on, and nothing has gone wrong.
+    var wanted: Bool { driver != nil && lock.withLock { enabled && refusal == nil } }
+    /// Moving other apps' windows. The window server only lets a process do that once the Dock has granted its
+    /// connection; until then a move shows in tegi's own view of a window and nowhere else.
+    var active: Bool { wanted && lock.withLock { authorizationGranted } }
     /// Why it isn't fully working, for Settings to show in place of its description.
     var problem: String? {
         guard lock.withLock({ enabled }) else { return nil }
         if failure != nil { return "macOS refused it, so windows move the standard way." }
         if driver == nil { return "Not available on this macOS." }
-        if let authorizationFailure { return "The overview shows snapshots: \(authorizationFailure)." }
+        if let authorizationFailure { return "Windows move the standard way: \(authorizationFailure)." }
         return nil
     }
 
-    init(driver: Driver? = .load()) { self.driver = driver }
+    /// How long the window list takes to show a committed move; checked sooner, every move looks refused.
+    private let settle: TimeInterval
+    private var latest: [CGWindowID: CGPoint] = [:]
+    private var probing = false
+
+    init(driver: Driver? = .load(), settle: TimeInterval = 0.1) {
+        self.driver = driver
+        self.settle = settle
+    }
 
     func configure(enabled: Bool) {
         guard lock.withLock({ () -> Bool in
@@ -107,19 +119,21 @@ final class WindowServer {
             self.enabled = enabled
             checked = false
             refusal = nil
+            latest = [:]
+            probing = false
             return true
         }) else { return }
         if !enabled { liveScenes = false }
     }
 
     func authorizeLiveScenes() {
-        guard active, !liveScenes, !authorizing else { return }
+        guard wanted, !liveScenes, !authorizing else { return }
         guard LiveWindowLayer.available else {
             authorizationFailure = "this macOS can't show live windows"
             onChange()
             return
         }
-        if authorizationGranted {
+        if lock.withLock({ authorizationGranted }) {
             liveScenes = true
             onChange()
             return
@@ -155,8 +169,8 @@ final class WindowServer {
                 guard let self else { return }
                 self.authorizing = false
                 guard self.enabled else { return }
-                self.liveScenes = problem == nil && self.authorizationGranted
-                self.authorizationFailure = self.liveScenes ? nil : problem ?? "macOS refused live windows"
+                self.liveScenes = problem == nil && self.lock.withLock { self.authorizationGranted }
+                self.authorizationFailure = self.liveScenes ? nil : problem ?? "macOS refused to let tegi move windows"
                 self.onChange()
             }
         }
@@ -164,7 +178,7 @@ final class WindowServer {
 
     func acceptAuthorization(connection: Int32) -> Bool {
         guard connection == Self.connectionID else { return false }
-        authorizationGranted = true
+        lock.withLock { authorizationGranted = true }
         liveScenes = active
         onChange()
         return true
@@ -203,17 +217,8 @@ final class WindowServer {
         return unsafeBitCast(symbol, to: Function.self)()
     }()
 
-    func hide(_ id: CGWindowID) {
-        guard active else { return }
-        driver?.order(id, 0, 0)
-    }
 
-    func show(_ id: CGWindowID, below other: CGWindowID) {
-        driver?.order(id, -1, other)
-    }
 
-    /// Where the window server has a window, and at what size: the size an app took lands here first.
-    func bounds(_ id: CGWindowID) -> CGRect? { driver?.bounds(id) }
 
     func raise(_ id: CGWindowID, above other: CGWindowID) {
         guard active else { return }
@@ -226,13 +231,13 @@ final class WindowServer {
         return displays.prefix(Int(count)).contains { CGDisplayBounds($0).contains(frame) }
     }
 
-    // Transaction setters don't return errors. A bounds query confirms the first actual move,
-    // including systems where the server silently ignores another app's windows.
+    // Transaction setters don't return errors. Where the window list has a window a moment later confirms the first
+    // actual move, including systems where the server silently ignores another app's windows.
     func submit(_ frames: [CGWindowID: CGPoint]) {
         guard let driver, !frames.isEmpty, active else { return }
         let placed = driver.placed ?? driver.bounds
         // Only a window going somewhere wholly on a display: macOS keeps a sliver of some parked windows its own way.
-        let probe = lock.withLock { checked } ? nil : frames.first { id, point in
+        let probe = lock.withLock { checked || probing } ? nil : frames.first { id, point in
             placed(id).map { $0.origin != point && Self.onDisplay(CGRect(origin: point, size: $0.size)) } ?? false
         }
         let start = CACurrentMediaTime()
@@ -242,13 +247,25 @@ final class WindowServer {
             commits += 1
             commitMS += elapsed
             peakMS = max(peakMS, elapsed)
+            if !checked { latest.merge(frames) { _, new in new } }
+            if probe != nil { probing = true }
         }
-        guard let (id, target) = probe, let actual = placed(id) else { return }
-        guard abs(actual.minX - target.x) < 1 && abs(actual.minY - target.y) < 1 else {
-            lock.withLock { refusal = "macOS refused the move" }
-            DispatchQueue.main.async { [self] in onRefused() }
-            return
+        guard let (id, target) = probe else { return }
+        let verify = { [self] in
+            let actual = placed(id)
+            let refused = lock.withLock { () -> Bool? in
+                probing = false
+                // Moved on since, or gone: nothing to tell from it; the next move is checked instead.
+                guard latest[id] == target, let actual else { return nil }
+                return abs(actual.minX - target.x) >= 1 || abs(actual.minY - target.y) >= 1
+            }
+            guard let refused else { return }
+            lock.withLock {
+                if refused { refusal = "macOS refused the move" } else { checked = true }
+                latest = [:]
+            }
+            if refused { DispatchQueue.main.async { [self] in onRefused() } }
         }
-        lock.withLock { checked = true }
+        if settle == 0 { verify() } else { DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + settle, execute: verify) }
     }
 }

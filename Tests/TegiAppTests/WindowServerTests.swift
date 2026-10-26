@@ -19,8 +19,9 @@ private final class Server {
 @Test func aSilentDenialStopsSubmittingUntilTurnedOnAgain() {
     let server = Server()
     server.refuses = true
-    let motion = WindowServer(driver: server.driver)
+    let motion = WindowServer(driver: server.driver, settle: 0)
     motion.configure(enabled: true)
+    _ = motion.acceptAuthorization(connection: WindowServer.connectionID)
     motion.submit([1: CGPoint(x: 50, y: 60), 2: CGPoint(x: 70, y: 80)])
     #expect(!motion.active)
     #expect(motion.failure != nil)
@@ -34,9 +35,21 @@ private final class Server {
     #expect(server.positions[1] == CGPoint(x: 90, y: 100))
 }
 
+@Test func untilTheDockGrantsItMovesNothing() {
+    let server = Server()
+    let motion = WindowServer(driver: server.driver, settle: 0)
+    motion.configure(enabled: true)
+    #expect(motion.wanted && !motion.active)
+    motion.submit([1: CGPoint(x: 50, y: 60)])
+    #expect(server.commits == 0)
+    _ = motion.acceptAuthorization(connection: WindowServer.connectionID)
+    motion.submit([1: CGPoint(x: 50, y: 60)])
+    #expect(server.positions[1] == CGPoint(x: 50, y: 60))
+}
+
 @Test func turnedOffItMovesNothing() {
     let server = Server()
-    let motion = WindowServer(driver: server.driver)
+    let motion = WindowServer(driver: server.driver, settle: 0)
     motion.submit([1: CGPoint(x: 50, y: 60)])
     #expect(server.positions[1] == .zero)
     #expect(server.commits == 0)
@@ -44,7 +57,7 @@ private final class Server {
 
 @Test func authorizationBelongsToOneProcessAndTurningMotionOffHidesLivePreviews() {
     let server = Server()
-    let motion = WindowServer(driver: server.driver)
+    let motion = WindowServer(driver: server.driver, settle: 0)
     motion.configure(enabled: true)
     #expect(!motion.acceptAuthorization(connection: WindowServer.connectionID + 1))
     #expect(!motion.liveScenes)
