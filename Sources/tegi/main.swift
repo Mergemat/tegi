@@ -79,7 +79,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         reloadConfig()
         let wm = WindowManager(config: config ?? .builtIn)
         wm.onChange = { [weak self] in
-            if let self { settingsModel.motionProblem = self.wm?.windowServer.problem }
+            if let self { settingsModel.motionProblem = self.wm?.mode.problem }
             self?.refresh()
             self?.queueEvent()
         }

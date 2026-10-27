@@ -85,11 +85,11 @@ final class WindowManager {
     var cornersOnScreen: Set<WindowID> = []
 
     let motion = Motion()
+    /// This process's connection, whose Dock grant lasts until tegi quits, however often direct motion is turned on.
     let windowServer: WindowServer
-    var serverUnsynced: Set<WindowID> = []
-    let compositor: Compositor
-    var serverAuthorizationAttempted = false
-    var serverScenesLive = false
+    private(set) lazy var direct = DirectMotion(self)
+    private(set) lazy var standard = StandardMotion(self)
+    var mode: MotionMode { config.animations.windowServer ? direct : standard }
     var targets: [WindowID: Placement] = [:]
     var lastViews: [Double] = []
     var homes: [WindowID: Int] = [:]
@@ -132,10 +132,7 @@ final class WindowManager {
     init(config: Config, windowServer: WindowServer = WindowServer()) {
         self.config = config
         self.windowServer = windowServer
-        compositor = Compositor(server: windowServer)
-        windowServer.configure(enabled: config.animations.windowServer)
-        windowServer.onChange = { [weak self] in self?.serverBackendChanged() }
-        startCompositor()
+        mode.start()
     }
 
     func start() {
@@ -273,15 +270,13 @@ final class WindowManager {
 
     func update(_ new: Config) {
         let old = config
-        if old.animations.windowServer != new.animations.windowServer {
-            finishServerMotion()
-            windowServer.configure(enabled: new.animations.windowServer)
-            // Off, tegi gives back what it was trusted with: sudo stops running its loader without a password.
-            if !new.animations.windowServer { WindowServer.forget(asking: true) }
-            serverAuthorizationAttempted = false
+        let switching = old.animations.windowServer != new.animations.windowServer
+        if switching { mode.stop() }
+        config = new
+        if switching {
+            mode.start()
             applied = [:]
         }
-        config = new
         applyConfigToWorld()
         for win in wins.values {
             let app = win.worker.bundleID
@@ -322,7 +317,7 @@ final class WindowManager {
         overview = false
         var restored: [WindowID: CGRect] = [:]
         var cascade = 0
-        let hidden = world.layout(config: config).filter { !$0.value.visible }.map(\.key) + Array(floatHidden)
+        let hidden = layout().filter { !$0.value.visible }.map(\.key) + Array(floatHidden)
         for id in hidden.sorted() {
             guard let win = wins[id] else { continue }
             let m = world.locate(id)?.monitor ?? floatMonitor(win) ?? 0
@@ -342,25 +337,26 @@ final class WindowManager {
             }
             restored[id] = frame
         }
-        finishServerMotion(restoring: restored)
+        mode.finish(restoring: restored)
     }
+
+    func layout() -> [WindowID: Placement] { mode.layout(world.layout(config: config)) }
 
     func relayout(measuringFrom start: CFAbsoluteTime? = nil, direct: Bool = false, tracking: Bool = false,
                   fling: (velocity: Double, monitor: Int)? = nil) {
         guard !paused else { return }
-        requestServerAuthorization()
         if let start { pressed = start }
         sentSomething = false
         defer {
             if !sentSomething && !motion.isMoving { pressed = nil }
         }
         world.pinned = Set(wins.values.compactMap { $0.floating && !$0.suspended ? $0.floatHome : nil })
-        let placements = world.layout(config: config)
+        let placements = layout()
         let now = max(CACurrentMediaTime(), motion.clock)
         let animate = !direct && config.animations.on && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         followWorkspaces(animate: animate)
         let views = world.monitors.indices.map { world.viewPosition(monitor: $0, config: config) }
-        updateCompositor()
+        mode.sync()
         let wereHomes = homes
         homes = Dictionary(world.monitors.flatMap { $0.workspaces.flatMap { ws in ws.columns.flatMap { $0.tiles.map { ($0.id, ws.id) } } } },
                            uniquingKeysWith: { a, _ in a })
@@ -371,15 +367,10 @@ final class WindowManager {
             // flying it across the strip underneath would show it still on its way.
             let changedWorkspace = wereHomes[id].map { $0 != homes[id] } ?? false
             var from = motion.current(id, at: now)
-            if windowServer.active, let presented = windowServer.presentation(of: win.windowID) {
-                from?.frame = presented.frame
-            }
+            if let start = mode.start(id, at: now) { from?.frame = start }
             if animate, !changedWorkspace, let to = p.strip, let from, from.monitor == p.monitor,
                let springs = springs(from: from.frame, to: to, monitor: p.monitor, views: views,
                                      override: tracking ? .tracking : nil) {
-                if windowServer.active, from.frame.size != to.size, wins[id]?.windowID != 0 {
-                    requestSize(id, to)
-                }
                 let velocity = fling.flatMap { fling -> Double? in
                     guard fling.monitor == p.monitor else { return nil }
                     let distance = to.minX - from.frame.minX
@@ -389,19 +380,12 @@ final class WindowManager {
                 }
                 if motion.move(id, from: from.frame, to: to, monitor: p.monitor, at: now,
                                velocity: velocity, springs: springs) {
-                    if windowServer.active, wins[id]?.windowID != 0 { serverUnsynced.insert(id) }
+                    mode.flying(id, from: from.frame, to: to)
                     continue
                 }
             }
             motion.stop(id, at: p.strip.map { ($0, p.monitor) })
-            let frame: CGRect
-            if windowServer.active {
-                let origin = applied[id]?.origin ?? win.original?.origin ?? p.frame.origin
-                frame = p.strip ?? CGRect(origin: origin, size: p.frame.size)
-            } else {
-                frame = p.frame
-            }
-            send(id, frame)
+            send(id, mode.rest(id, p))
         }
         motion.forget { placements[$0] == nil }
         watchWindowOrder()
@@ -413,7 +397,7 @@ final class WindowManager {
             motion.run { [weak self] t in self?.tick(at: t) }
         }
         targets = placements
-        if let start = pressed, windowServer.active, sentSomething || motion.isMoving {
+        if let start = pressed, mode.presents, sentSomething || motion.isMoving {
             pressed = nil
             latency = String(format: "Keypress to first motion: %.1f ms", (CFAbsoluteTimeGetCurrent() - start) * 1000)
         }
@@ -436,27 +420,17 @@ final class WindowManager {
         var sceneFrames: [UInt32: [WindowID: CGRect]] = [:]
         for f in motion.frames(at: now)
             where world.monitors.indices.contains(f.monitor) {
-            if windowServer.active, wins[f.id]?.windowID != 0 {
-                // The compositor presents the flight; landing is where Accessibility hears where the window is.
-                if f.last { send(id: f.id, f.frame, verify: true) }
-            } else {
-                send(id: f.id, world.place(f.frame, on: f.monitor).frame, verify: f.last)
-            }
+            mode.step(f.id, f.frame, monitor: f.monitor, last: f.last)
             let monitor = world.monitors[f.monitor]
-            if windowServer.liveScenes, scenes[monitor.id]?.isVisible == true {
-                let shown = wins[f.id].flatMap { windowServer.presentation(of: $0.windowID)?.frame }
-                    ?? refusals[f.id]?.apply(to: f.frame) ?? f.frame
+            if mode.liveScenes, scenes[monitor.id]?.isVisible == true {
+                let shown = mode.presented(f.id) ?? refusals[f.id]?.apply(to: f.frame) ?? f.frame
                 sceneFrames[monitor.id, default: [:]][f.id] = shown.offsetBy(dx: -monitor.area.minX, dy: -monitor.area.minY)
             }
         }
         for (display, frames) in sceneFrames { scenes[display]?.setFrames(frames) }
         updateRing(at: now)
         if !motion.isMoving {
-            if let summary = motion.summary() {
-                smoothness = windowServer.active
-                    ? String(format: "WindowServer commit: %.2f ms average, %.2f ms peak", windowServer.meanCommitMS, windowServer.maxCommitMS)
-                    : summary
-            }
+            if let summary = motion.summary() { smoothness = mode.smoothness(summary) }
             onChange()
             scheduleWarmup()
         }
@@ -466,10 +440,7 @@ final class WindowManager {
 
     func send(id: WindowID, _ frame: CGRect, verify: Bool) {
         guard wins[id]?.fullScreen != true, !nativeMoving.contains(id) else { return }
-        if windowServer.active, wins[id]?.windowID != 0 {
-            return sendThroughServer(id, frame, verify: verify)
-        }
-        sendAccessibility(id, frame, verify: verify)
+        mode.send(id, frame, verify: verify)
     }
 
     func sendAccessibility(_ id: WindowID, _ frame: CGRect, verify: Bool, force: Bool = false) {
@@ -482,14 +453,14 @@ final class WindowManager {
         let gen = (generation[id] ?? 0) + 1
         generation[id] = gen
         unlanded.insert(id)
-        win.worker.apply(id, win.element, frame, resize: resize, verify: verify, placed: windowServer.active && win.windowID != 0,
+        win.worker.apply(id, win.element, frame, resize: resize, verify: verify, placed: mode.presents && win.windowID != 0,
                          measured: { [weak self] id, size in
             guard let self, wins[id] != nil, applied[id]?.size == frame.size else { return }
             sizeAnswered(id, asked: frame.size, actual: size)
         }, done: { [weak self] in
             guard let self else { return }
             // In step only if Accessibility was told where the window is; a resize asked off to the side isn't.
-            if generation[id] == gen, applied[id] == frame { serverUnsynced.remove(id) }
+            if generation[id] == gen, applied[id] == frame { mode.landed(id) }
             placed(id, generation: gen)
         })
     }
@@ -498,21 +469,7 @@ final class WindowManager {
 
     func shownFrame(_ id: WindowID, at now: CFTimeInterval) -> CGRect? {
         if nativeMoving.contains(id), let win = wins[id] { return onScreen(win.windowID) }
-        if windowServer.active, let win = wins[id], let shown = windowServer.presentation(of: win.windowID) {
-            guard shown.clip.map({ !$0.isEmpty && $0.intersects(shown.frame) }) ?? true else { return nil }
-            return shown.frame
-        }
-        if let g = grab, g.window == id, !g.resize, !g.floating { return g.current }
-        let moving = motion.current(id, at: now)
-        let p = moving.map { world.place($0.frame.roundedToPoints, on: $0.monitor) } ?? targets[id]
-        guard p?.visible == true, var frame = p?.frame else { return nil }
-        // Mid-motion the ring follows the window as the window server shows it: apps apply tegi's orders a few frames
-        // late, and report them done before they're on screen, so either would leave the ring around empty space.
-        if !windowServer.active, motion.isFlying(id), let wid = wins[id]?.windowID {
-            guard let at = onScreen(wid), world.monitors.contains(where: { $0.screen.intersection(at).width > 40 }) else { return nil }
-            frame = at
-        }
-        return refusals[id]?.apply(to: frame) ?? frame
+        return mode.shown(id, at: now)
     }
 
     /// What the ring and pictures round a window's corners by: a set radius, else the window's own, else macOS's usual.
@@ -544,8 +501,8 @@ final class WindowManager {
 
     func placed(_ id: WindowID, generation gen: Int) {
         guard generation[id] == gen else { return }
-        contentAnswered(id)
         unlanded.remove(id)
+        contentAnswered(id)
         if !hideWhenLanded.isEmpty { hideLandedScenes() }
         if let start = pressed {
             pressed = nil
@@ -638,7 +595,7 @@ final class WindowManager {
         if focused == id { focused = nil }
         recent.forget(id)
         snapshots.forget(id)
-        serverUnsynced.remove(id)
+        mode.release(id)
     }
 
     func handle(_ worker: AppWorker, _ el: AXUIElement, _ event: AppWorker.Event) {
@@ -669,6 +626,11 @@ final class WindowManager {
         case .restored:
             suspend(win, false)
         case .resized:
+            if mode.echoes(id) {
+                // The verified landing measures this resize. Reading every echo can delay the next frame.
+                // Space changes also catch native full-screen transitions while a resize is in flight.
+                return contentAnswered(id)
+            }
             // Going full screen, or coming back, shows first as a resize: settled before anything sizes or places it.
             worker.read(el) { [weak self] info in
                 guard let self, let info, wins[id] != nil else { return }
@@ -684,11 +646,8 @@ final class WindowManager {
 
     private func windowMoved(_ id: WindowID, _ win: Win, _ worker: AppWorker, _ el: AXUIElement, resized: Bool) {
         if resized, NSEvent.pressedMouseButtons & 1 == 0 { sizeChanged(id) }
-        let mouseDown = windowServer.active ? nativePressed == id : NSEvent.pressedMouseButtons & 1 != 0
-        if windowServer.active, !yieldToNative(id) {
-            updateCompositor()
-            return
-        }
+        guard mode.heard(id) else { return }
+        let mouseDown = mode.pressed(id)
         if win.floating { return floatingMoved(win) }
         guard grab?.window != id else { return }
         // tegi's own moves echo back every frame; reading each one would double the traffic to the app mid-motion.
@@ -750,7 +709,7 @@ final class WindowManager {
                 world.move(win.id, to: m, workspace: w, at: .newColumn(home.column), config: config)
             }
         }
-        updateCompositor()
+        mode.sync()
         relayout()
     }
 
@@ -769,9 +728,8 @@ final class WindowManager {
     /// Nothing of tegi's may move or size a window that's left the strip's control, such as for full screen.
     private func letGo(_ id: WindowID) {
         motion.stop(id, at: nil)
-        compositor.release(id)
+        mode.release(id)
         nativeMoving.remove(id)
-        serverUnsynced.remove(id)
         forced[id] = nil
         refusals[id] = nil
         strays.removeValue(forKey: id)?.cancel()
@@ -888,11 +846,12 @@ final class WindowManager {
     }
 
     func state() -> [String: Any] {
-        let placements = world.layout(config: config)
+        let placements = layout()
+        let direct = mode as? DirectMotion
         func window(_ id: WindowID) -> [String: Any] {
             guard let win = wins[id] else { return ["id": id] }
             var out: [String: Any] = ["id": id, "window_id": win.windowID,
-                                      "compositor_origin": compositor.origin(of: id).map { [$0.x, $0.y] } ?? NSNull(),
+                                      "compositor_origin": direct?.compositor.origin(of: id).map { [$0.x, $0.y] } ?? NSNull(),
                                       "corner_radius": (config.windowCornerRadius ?? snapshots.radii[id]).map { NSNumber(value: $0) } ?? NSNull(), "app": win.worker.name, "bundle_id": win.worker.bundleID ?? NSNull(),
                                       "title": win.title, "floating": win.floating, "focused": focused == id]
             if let p = placements[id] {
@@ -907,6 +866,8 @@ final class WindowManager {
                 out["presented_frame"] = [f.minX, f.minY, f.width, f.height]
                 out["visible"] = presentation.clip.map { !$0.isEmpty && $0.intersects(f) } ?? true
                 out["presentation_clip"] = presentation.clip.map { [$0.minX, $0.minY, $0.width, $0.height] } ?? NSNull()
+            } else if win.windowID != 0, let f = onScreen(win.windowID) {
+                out["presented_frame"] = [f.minX, f.minY, f.width, f.height]
             }
             if let home = win.floatHome { out["workspace_id"] = home }
             if let limit = world.heightLimit(for: id) {
@@ -915,15 +876,15 @@ final class WindowManager {
             return out
         }
         return [
-            "motion_problem": windowServer.problem ?? NSNull(),
+            "motion_problem": mode.problem ?? NSNull(),
             "window_server_connection": WindowServer.connectionID,
             "overview": overview,
             "animating": motion.isMoving || scenes.values.contains(where: \.isAnimating),
             "dock_access_remembered": WindowServer.remembered,
-            "compositor": ["frames": windowServer.frames, "presented": compositor.frames.presented, "missed": compositor.frames.missed,
+            "compositor": ["frames": windowServer.frames, "presented": direct?.compositor.frames.presented ?? 0, "missed": direct?.compositor.frames.missed ?? 0,
                            "mean_commit_ms": windowServer.meanCommitMS,
                            "max_commit_ms": windowServer.maxCommitMS, "live_previews": windowServer.liveScenes,
-                           "controlled_windows": windowServer.controlledWindows, "presentation": windowServer.active ? "locked-bounds" : "accessibility"],
+                           "controlled_windows": windowServer.controlledWindows, "presentation": direct == nil ? "accessibility" : "locked-bounds"],
             "timing": timing ?? NSNull(),
             "paused": paused,
             "focused_monitor": world.focusedMonitor,

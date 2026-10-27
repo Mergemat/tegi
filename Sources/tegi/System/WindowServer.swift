@@ -127,9 +127,9 @@ final class WindowServer {
     /// Why it isn't fully working, for Settings to show in place of its description.
     var problem: String? {
         guard lock.withLock({ enabled }) else { return nil }
-        if failure != nil { return "macOS refused it, so windows move the standard way." }
+        if failure != nil { return "macOS refused it, so windows stay where they are." }
         if driver == nil { return "Not available on this macOS." }
-        if let authorizationFailure { return "Windows move the standard way: \(authorizationFailure)." }
+        if let authorizationFailure { return "Windows stay where they are: \(authorizationFailure)." }
         return nil
     }
 

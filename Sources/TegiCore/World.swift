@@ -670,7 +670,7 @@ public struct World: Equatable {
     }
 
     // macOS won't move a window fully off screen; one point stays visible.
-    func park(_ size: CGSize, area: CGRect, others: [CGRect]) -> CGRect {
+    public func park(_ size: CGSize, area: CGRect, others: [CGRect]) -> CGRect {
         let right = CGRect(origin: CGPoint(x: area.maxX - 1, y: area.maxY - 1), size: size)
         if !others.contains(where: { $0.intersects(right) }) { return right }
         return CGRect(origin: CGPoint(x: area.minX - size.width + 1, y: area.maxY - 1), size: size)

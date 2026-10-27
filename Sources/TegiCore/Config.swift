@@ -633,7 +633,7 @@ public struct Config: Equatable {
     animations on
 
     # Smoother motion and a live overview: windows move through the window server
-    # every display frame. Needs SIP off; if macOS refuses, they move the standard way.
+    # every display frame. Needs SIP off; if macOS refuses, they stay where they are.
     window-server-motion off
 
     # Stretches every animation: 2 is twice as slow, 0.5 twice as fast.

@@ -15,7 +15,7 @@ extension WindowManager {
         freshener = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
             guard let self, !paused, !motion.isMoving, CACurrentMediaTime() - lastFocusMove > 1 else { return }
             freshTicks += 1
-            if windowServer.liveScenes {
+            if mode.liveScenes {
                 if freshTicks % 40 == 0 { refreshWallpapers() }
                 return
             }
@@ -46,7 +46,7 @@ extension WindowManager {
             let was = shown[mon.id]
             shown[mon.id] = now
             if let scene = scenes[mon.id], scene.isVisible {
-                scene.update(sceneContent(m, current: windowServer.liveScenes), animated: animate)
+                scene.update(sceneContent(m, current: mode.liveScenes), animated: animate)
                 scene.setNames(workspaceNames(m))
                 if was?.id != now.id || overview { scene.slide(to: mon.active, velocity: slideVelocity) }
                 continue
@@ -54,8 +54,8 @@ extension WindowManager {
             // A full-screen window's workspace is its Space: macOS animates going there or back, once, so tegi doesn't.
             let spaces = [was?.id, now.id].contains { id in mon.workspaces.first { $0.id == id }.map(holdsFullScreen) ?? false }
             guard let was, was.id != now.id, animate, !spaces, config.animations.spring(.workspaceSwitch) != nil,
-                  snapshots.allowed || windowServer.liveScenes, let scene = scene(for: m) else { continue }
-            var content = sceneContent(m, current: windowServer.liveScenes)
+                  snapshots.allowed || mode.liveScenes, let scene = scene(for: m) else { continue }
+            var content = sceneContent(m, current: mode.liveScenes)
             var from = Double(was.index), to = mon.active
             if let i = mon.workspaces.firstIndex(where: { $0.id == was.id }) {
                 from = Double(i)
@@ -82,13 +82,13 @@ extension WindowManager {
         guard open != overview else { return }
         overview = open
         if open {
-            if !windowServer.liveScenes { snapshots.refreshAccess(prompt: true) }
+            if !mode.liveScenes { snapshots.refreshAccess(prompt: true) }
             for (m, mon) in world.monitors.enumerated() {
                 guard let scene = scene(for: m) else { continue }
-                let content = sceneContent(m, current: windowServer.liveScenes)
+                let content = sceneContent(m, current: true)
                 if !scene.isVisible { scene.show(content, at: Double(mon.active)) }
                 scene.setNames(workspaceNames(m))
-                scene.openOverview(needsAccess: !snapshots.allowed && !windowServer.liveScenes,
+                scene.openOverview(needsAccess: !snapshots.allowed && !mode.liveScenes,
                                    velocity: velocity.map(scene.zoomVelocity(opening:)))
                 scene.update(content)
                 refreshSnapshots(content.flatMap { $0.map(\.id) })
@@ -116,7 +116,7 @@ extension WindowManager {
         let height = NSScreen.screens.first?.frame.height ?? screen.frame.height
         let area = CGRect(x: mon.area.minX, y: height - mon.area.maxY, width: mon.area.width, height: mon.area.height)
         let scene = Scene(area: area, screen: screen.frame, wallpaper: wallpaper(screen), paper: papers[screen.displayID], config: config,
-                          live: windowServer.liveScenes)
+                          live: mode.liveScenes)
         let display = mon.id
         scene.onSettled = { [weak self] in self?.onChange() }
         func monitorIndex() -> Int? { world.monitors.firstIndex { $0.id == display } }
@@ -126,7 +126,7 @@ extension WindowManager {
             let finish = (sceneFinishes[display] ?? 0) + 1
             sceneFinishes[display] = finish
             hideLandedScenes()
-            guard !windowServer.liveScenes else { return }
+            guard !mode.liveScenes else { return }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
                 guard let self, sceneFinishes[display] == finish else { return }
                 hideLandedScenes(force: true)
@@ -200,29 +200,33 @@ extension WindowManager {
             let ringed = w == mon.active && !ws.columns.isEmpty && !ws.columns[ws.active].fullscreen
             var windows = world.stripFrames(monitor: m, workspace: w, config: config).map { f in
                 var frame = f.frame
-                let presented = wins[f.id].flatMap { windowServer.presentation(of: $0.windowID)?.frame }
+                let presented = mode.presented(f.id)
+                let native = current && !mode.presents && w == mon.active && targets[f.id]?.visible == true
+                    ? shownFrame(f.id, at: motion.clock) : nil
                 if let presented { frame.size = presented.size }
-                if current, motion.isFlying(f.id), self.homes[f.id] == ws.id {
+                if let native {
+                    frame = native.offsetBy(dx: -mon.area.minX, dy: -mon.area.minY)
+                } else if current, motion.isFlying(f.id), self.homes[f.id] == ws.id {
                     if let presented {
                         frame = presented.offsetBy(dx: -mon.area.minX, dy: -mon.area.minY)
                     } else if let shown = motion.current(f.id, at: motion.clock), shown.monitor == m {
                         frame = shown.frame.roundedToPoints.offsetBy(dx: -mon.area.minX, dy: -mon.area.minY)
                     }
                 }
-                let shown = presented == nil ? refusals[f.id]?.apply(to: frame) ?? frame : frame
+                let shown = presented == nil && native == nil ? refusals[f.id]?.apply(to: frame) ?? frame : frame
                 return Scene.Window(id: f.id, frame: shown, ring: f.active && ringed ? ring : nil, radius: cornerRadius(f.id), floating: false,
                              depth: depth(f.id), image: snapshots.images[f.id], icon: wins[f.id]?.worker.icon,
-                             liveWindow: windowServer.liveScenes ? wins[f.id]?.windowID : nil)
+                             liveWindow: mode.liveScenes ? wins[f.id]?.windowID : nil)
             }
             let id = mon.workspaces[w].id
             for win in wins.values where win.floating && !win.suspended && win.floatHome == id && !snapshots.blank.contains(win.id) {
                 guard var f = win.floatFrame else { continue }
-                if let presented = windowServer.presentation(of: win.windowID)?.frame {
+                if let presented = mode.presented(win.id) {
                     if current, w == mon.active { f = presented } else { f.size = presented.size }
                 }
                 windows.append(Scene.Window(id: win.id, frame: f.offsetBy(dx: -mon.area.minX, dy: -mon.area.minY),
                                             ring: nil, radius: cornerRadius(win.id), floating: true, depth: depth(win.id), image: snapshots.images[win.id], icon: win.worker.icon,
-                                            liveWindow: windowServer.liveScenes ? win.windowID : nil))
+                                            liveWindow: mode.liveScenes ? win.windowID : nil))
             }
             return windows
         }
@@ -292,7 +296,7 @@ extension WindowManager {
     /// `corners`: for the corner radius, which the ring follows, even of a window measured before.
     func refreshSnapshots(_ ids: [WindowID], corners: Bool = false) {
         // Live pictures need no snapshots, but a window's corner radius is measured from one.
-        let ids = windowServer.liveScenes && !corners ? ids.filter { snapshots.radii[$0] == nil } : ids
+        let ids = mode.liveScenes && !corners ? ids.filter { snapshots.radii[$0] == nil } : ids
         let list = ids.compactMap { id in wins[id].map { (id: id, windowID: $0.windowID) } }
         let radii = snapshots.radii
         snapshots.refresh(list, scale: NSScreen.main?.backingScaleFactor ?? 2) { [weak self] id in
@@ -334,7 +338,7 @@ extension WindowManager {
         for scene in scenes.values { scene.close() }
         scenes = [:]
         hideWhenLanded = []
-        guard snapshots.allowed || windowServer.liveScenes else { return }
+        guard snapshots.allowed || mode.liveScenes else { return }
         for m in world.monitors.indices { _ = scene(for: m) }
     }
 }

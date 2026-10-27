@@ -69,17 +69,28 @@ private final class Server {
     #expect(!motion.active)
 }
 
-@Test func aDenialIsCaughtEvenWhenANewerMoveOvertakesTheOneBeingChecked() {
+@MainActor @Test func aDenialIsCaughtEvenWhenANewerMoveOvertakesTheOneBeingChecked() async {
     let server = Server()
     server.refuses = true
     let motion = WindowServer(driver: server.driver, settle: 0.02)
     motion.configure(enabled: true)
     _ = motion.acceptAuthorization(connection: WindowServer.connectionID)
-    let refused = DispatchSemaphore(value: 0)
-    motion.onRefused = { refused.signal() }
-    motion.submit([1: .init(frame: CGRect(x: 50, y: 60, width: 100, height: 100), clip: nil)])
-    motion.submit([1: .init(frame: CGRect(x: 70, y: 80, width: 100, height: 100), clip: nil)])
-    #expect(refused.wait(timeout: .now() + 1) == .success)
+    let refused = await withCheckedContinuation { continuation in
+        var finished = false
+        motion.onRefused = {
+            guard !finished else { return }
+            finished = true
+            continuation.resume(returning: true)
+        }
+        motion.submit([1: .init(frame: CGRect(x: 50, y: 60, width: 100, height: 100), clip: nil)])
+        motion.submit([1: .init(frame: CGRect(x: 70, y: 80, width: 100, height: 100), clip: nil)])
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+            guard !finished else { return }
+            finished = true
+            continuation.resume(returning: false)
+        }
+    }
+    #expect(refused)
 }
 
 @Test func aWindowItsAppMovesAfterAnAcceptedMoveIsNotARefusal() {

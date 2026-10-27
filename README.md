@@ -28,11 +28,12 @@ Apple silicon, macOS 14 or later.
 - **Settings window:** every option, writing that same file.
 - **Rules:** per app or title, float or tile, width, workspace, display, focus.
 - **Stubborn apps:** a window an app moves on its own goes back in its column. Stacks reserve each window's accepted minimum height; if they cannot fit, moving focus brings that window into view. `reset-window-height` clears the learned height limit.
-- **Scripting:** `tegi msg action <command>`, `tegi msg state`, `tegi msg event-stream`.
+- **Scripting:** `tegi msg action <command>`, `tegi msg state`, `tegi msg event-stream`. State includes requested and displayed frames in both motion modes.
 
 ## Limits macOS imposes
 
 - Standard motion parks off-screen windows with a sliver in a bottom corner. Direct motion clips them completely. Quitting tegi puts them back.
+- Standard motion also parks upper windows in a stack taller than the display until focus brings them back into view.
 - Standard motion uses snapshots for slides and the overview. Direct motion shows live windows.
 - One macOS Space per display: tegi's workspaces replace Spaces.
 
@@ -48,7 +49,7 @@ FAST=1 ./scripts/app.sh run  # the same, rebuilt in seconds but less optimized
 swift scripts/social.swift   # redraw the sharing images, og.png and social.png
 ```
 
-Direct window motion (Settings → Motion, or `window-server-motion on`) controls window presentation and clipping through WindowServer transactions and shows windows live in the overview. Apps keep their native size when they refuse a resize; size animation only scales content after the app accepts the target backing size. It needs SIP off and the `-arm64e_preview_abi` boot argument, as yabai does. Live windows ask for your password once, to load a small Dock helper that unloads right after granting tegi access, and to let tegi load that exact helper again without asking (`/Library/PrivilegedHelperTools/tegi-dock-loader` and `/etc/sudoers.d/tegi`, both removed when you turn direct motion off). The grant ends when tegi quits. If macOS refuses, windows move the standard way and Settings says why. `tegi msg state` includes commit timings.
+Direct window motion (Settings → Motion, or `window-server-motion on`) controls window presentation and clipping through WindowServer transactions and shows windows live in the overview. Apps keep their native size when they refuse a resize; size animation only scales content after the app accepts the target backing size. It needs SIP off and the `-arm64e_preview_abi` boot argument, as yabai does. Live windows ask for your password once, to load a small Dock helper that unloads right after granting tegi access, and to let tegi load that exact helper again without asking (`/Library/PrivilegedHelperTools/tegi-dock-loader` and `/etc/sudoers.d/tegi`, both removed when you turn direct motion off). The grant ends when tegi quits. Until the Dock grants access, or if macOS refuses, windows stay where they are and Settings says why. `tegi msg state` includes commit timings.
 
 - `Sources/TegiCore` is the layout model, config parser and springs: plain Swift with no macOS window APIs, so it's what the tests cover.
 - `Sources/tegi` is the app. `WindowManager/` applies the model to real windows and animates them; `System/` wraps macOS (Accessibility, input, hotkeys, screen capture, the IPC socket); `UI/` is what tegi draws itself (overview and slides, focus ring, switcher, cheat sheet, banners) and the Settings and welcome windows.

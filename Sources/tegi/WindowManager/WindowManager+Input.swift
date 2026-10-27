@@ -214,11 +214,11 @@ extension WindowManager {
         let m = s.monitor
         guard world.monitors.indices.contains(m) else { return }
         if s.startIndex == nil {
-            guard config.animations.spring(.workspaceSwitch) != nil, snapshots.allowed || windowServer.liveScenes,
+            guard config.animations.spring(.workspaceSwitch) != nil, snapshots.allowed || mode.liveScenes,
                   let scene = scene(for: m) else { return }
             s.startIndex = world.monitors[m].active
             if !scene.isVisible {
-                let content = sceneContent(m, current: windowServer.liveScenes)
+                let content = sceneContent(m, current: mode.liveScenes)
                 scene.show(content, at: Double(world.monitors[m].active))
                 refreshSnapshots(content.flatMap { $0.map(\.id) })
             }
@@ -363,17 +363,6 @@ extension WindowManager {
         world.move(g.window, to: m, workspace: world.monitors[m].active, at: position, config: config)
         relayout()
         focusModel()
-    }
-
-    /// A press in another app must not turn an AX echo into a native drag of this window.
-    func yieldToNative(_ id: WindowID) -> Bool {
-        if nativeMoving.contains(id) { return true }
-        guard windowServer.active, nativePressed == id, grab == nil, let win = wins[id] else { return false }
-        nativeMoving.insert(id)
-        motion.stop(id, at: nil)
-        compositor.release(id)
-        win.worker.cancelPosition(id)
-        return true
     }
 
     func nativeDragEnded() {

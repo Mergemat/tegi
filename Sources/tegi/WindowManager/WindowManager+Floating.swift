@@ -30,10 +30,7 @@ extension WindowManager {
             } else if !floatHidden.contains(win.id) {
                 floatHidden.insert(win.id)
                 let size = win.floatFrame?.size ?? applied[win.id]?.size ?? CGSize(width: 600, height: 400)
-                let frame = windowServer.active
-                    ? win.floatFrame ?? CGRect(origin: world.monitors[m].area.origin, size: size)
-                    : world.place(CGRect(origin: CGPoint(x: -1_000_000, y: 0), size: size), on: m).frame
-                send(win.id, frame)
+                send(win.id, mode.hide(win, size: size, on: m))
             }
         }
     }
@@ -184,7 +181,7 @@ extension WindowManager {
     /// Like niri, windows that aren't tiled stay above the tiles: floating ones, and the ones tegi leaves alone, such
     /// as an app's onboarding panel. macOS raises a tile above them when it takes focus, so they go back on top.
     func keepFloatingOnTop() {
-        guard windowServer.liveScenes else { return }
+        guard mode.liveScenes else { return }
         let tiled = Set(wins.values.filter { !$0.fullScreen && !$0.suspended && $0.windowID != 0 }.map(\.windowID))
         let me = getpid()
         let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
