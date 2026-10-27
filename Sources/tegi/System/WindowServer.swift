@@ -32,6 +32,8 @@ final class WindowServer {
         var clip: CGRect?
         /// Size animation is allowed only after the app has accepted this backing size.
         var resizeTo: CGSize? = nil
+        /// Native popups still need workspace clipping, but their apps retain control of geometry.
+        var locksBounds = true
     }
 
     struct Driver {
@@ -77,7 +79,11 @@ final class WindowServer {
                     clip(transaction, id, nil)
                 }
                 for (id, presentation) in frames {
-                    locked(transaction, id, presentation.frame)
+                    if presentation.locksBounds {
+                        locked(transaction, id, presentation.frame)
+                    } else {
+                        clear(transaction, id)
+                    }
                     if var rect = presentation.clip {
                         var shape: CFTypeRef?
                         guard region(&rect, &shape) == 0, let shape else { continue }
@@ -101,6 +107,8 @@ final class WindowServer {
     private var families: [CGWindowID: Set<CGWindowID>] = [:]
     private var owned: Set<CGWindowID> = []
     private var excluded: Set<CGWindowID> = []
+    private var appOwned: Set<CGWindowID> = []
+    var controlledIDs: Set<CGWindowID> { lock.withLock { owned } }
     var controlledWindows: Int { lock.withLock { owned.count } }
     private var enabled = false
     private var checked = false
@@ -368,14 +376,18 @@ final class WindowServer {
     }
 
     /// Acquiring freezes presentation before an app can answer a resize on its own thread.
-    func manage(_ windows: Set<CGWindowID>, excluding excluded: Set<CGWindowID> = [], clips: [CGWindowID: CGRect] = [:]) {
+    func manage(_ windows: Set<CGWindowID>, excluding excluded: Set<CGWindowID> = [], clips: [CGWindowID: CGRect] = [:], appOwned: Set<CGWindowID> = []) {
         guard active, let driver else { return }
         lock.withLock {
             self.excluded = excluded
+            self.appOwned = appOwned
             // SkyLight returns an undirected group, including parents and siblings. Give the group one
             // stable representative so an attached window cannot also transform its parent.
             let associations = Dictionary(uniqueKeysWithValues: windows.map { ($0, Set(driver.associated($0)).subtracting(excluded).union([$0])) })
-            let roots = Set(windows.filter { associations[$0]!.intersection(windows).min() == $0 })
+            let roots = Set(windows.filter { id in
+                let candidates = associations[id]!.intersection(windows)
+                return (candidates.subtracting(appOwned).min() ?? candidates.min()) == id
+            })
             for id in presentations.keys where !roots.contains(id) { presentations[id] = nil }
             families = associations.filter { roots.contains($0.key) }.mapValues { $0.subtracting(roots) }
             for id in roots where presentations[id] == nil {
@@ -383,13 +395,20 @@ final class WindowServer {
                     presentations[id] = Presentation(frame: frame, clip: clips[id])
                 }
             }
+            for id in roots.intersection(appOwned) { presentations[id]?.clip = clips[id] }
             commit(presentations, synchronous: true)
         }
     }
 
     func contentBounds(of id: CGWindowID) -> CGRect? { driver?.bounds(id) }
 
-    func presentation(of id: CGWindowID) -> Presentation? { lock.withLock { displayed[id] } }
+    func presentation(of id: CGWindowID) -> Presentation? {
+        lock.withLock {
+            guard var presentation = displayed[id] else { return nil }
+            if !presentation.locksBounds, let native = driver?.bounds(id) { presentation.frame = native }
+            return presentation
+        }
+    }
 
     func refreshContent(of id: CGWindowID) {
         guard active else { return }
@@ -423,6 +442,7 @@ final class WindowServer {
             presentations = [:]
             displayed = [:]
             families = [:]
+            appOwned = []
             owned = []
         }
     }
@@ -432,7 +452,13 @@ final class WindowServer {
         guard let driver else { return }
         var batch = changed
         for (id, presentation) in changed {
-            guard let native = driver.bounds(id)?.size else { continue }
+            guard let bounds = driver.bounds(id) else { continue }
+            if appOwned.contains(id) {
+                batch[id]?.frame = bounds
+                batch[id]?.locksBounds = false
+                continue
+            }
+            let native = bounds.size
             let accepted = presentation.resizeTo.map {
                 abs($0.width - native.width) <= 1 && abs($0.height - native.height) <= 1
             } ?? false
@@ -445,9 +471,11 @@ final class WindowServer {
             let sx = presentation.frame.width / parent.width, sy = presentation.frame.height / parent.height
             for child in children {
                 guard let frame = driver.bounds(child) else { continue }
+                // Once the parent's native frame catches up, leaving a lock here would freeze the app's next popup redraw.
                 batch[child] = Presentation(frame: CGRect(x: presentation.frame.minX + (frame.minX - parent.minX) * sx,
                                                           y: presentation.frame.minY + (frame.minY - parent.minY) * sy,
-                                                          width: frame.width * sx, height: frame.height * sy), clip: presentation.clip)
+                                                          width: frame.width * sx, height: frame.height * sy), clip: presentation.clip,
+                                            locksBounds: presentation.locksBounds && presentation.frame != parent)
             }
         }
         let retained = Set(presentations.keys).union(families.values.reduce(into: Set<CGWindowID>()) { $0.formUnion($1) })

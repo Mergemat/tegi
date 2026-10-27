@@ -47,9 +47,9 @@ final class Compositor: NSObject {
 
     // MARK: Main thread
 
-    func update(world: World, windows: [WindowID: CGWindowID], excluded: Set<CGWindowID> = [], clips: [CGWindowID: CGRect] = [:]) {
+    func update(world: World, windows: [WindowID: CGWindowID], excluded: Set<CGWindowID> = [], clips: [CGWindowID: CGRect] = [:], appOwned: Set<CGWindowID> = []) {
         lock.withLock {
-            server.manage(Set(windows.values), excluding: excluded, clips: clips)
+            server.manage(Set(windows.values), excluding: excluded, clips: clips, appOwned: appOwned)
             let removed = Set(self.windows.keys).subtracting(windows.keys)
             for id in removed { shown[id] = nil; flights[id] = nil }
             moves = moves.filter { windows.values.contains($0.key) }

@@ -60,7 +60,9 @@ final class DirectMotion: MotionMode {
         }
         compositor.update(world: wm.world, windows: Dictionary(uniqueKeysWithValues: managed.map { ($0.id, $0.windowID) }), excluded: Set(wm.wins.values.filter {
             $0.fullScreen || $0.suspended || wm.nativeMoving.contains($0.id)
-        }.map(\.windowID)), clips: Dictionary(uniqueKeysWithValues: managed.map { ($0.windowID, clip($0.id)) }))
+        }.map(\.windowID)), clips: Dictionary(uniqueKeysWithValues: managed.map { ($0.windowID, clip($0.id)) }),
+                          appOwned: Set(managed.filter(\.popup).map(\.windowID)))
+        wm.watchWindowOrder()
     }
 
     func layout(_ placements: [WindowID: Placement]) -> [WindowID: Placement] { placements }
@@ -86,6 +88,11 @@ final class DirectMotion: MotionMode {
     /// App geometry can change under locked bounds without moving or resizing the displayed window.
     func send(_ id: WindowID, _ frame: CGRect, verify: Bool) {
         guard server.active, let win = wm.wins[id] else { return }
+        if win.popup {
+            // Popups can finish positioning after discovery; tegi owns their visibility, not their geometry.
+            compositor.place(id, frame: frame, clip: clip(id))
+            return
+        }
         let before = wm.applied[id]
         let clip = clip(id)
         if before?.size != frame.size { wm.verified.remove(id) }
@@ -112,7 +119,7 @@ final class DirectMotion: MotionMode {
 
     func finish(restoring restored: [WindowID: CGRect]) {
         // A window tegi never placed, as before the Dock's grant, is still where its owner left it.
-        var frames = restored.filter { wm.applied[$0.key] != nil }
+        var frames = restored.filter { wm.applied[$0.key] != nil && wm.wins[$0.key]?.popup != true }
         for id in unsynced where frames[id] == nil { frames[id] = wm.applied[id] }
         // Keep the server's presentation until native geometry is ready to be shown again.
         wm.handBack(frames)
@@ -150,6 +157,7 @@ final class DirectMotion: MotionMode {
 
     func heard(_ id: WindowID) -> Bool {
         guard server.active else { return false }
+        if wm.wins[id]?.popup == true { return true }
         if yieldToNative(id) { return true }
         update()
         return false
@@ -189,7 +197,7 @@ final class DirectMotion: MotionMode {
     }
 
     func requestSize(_ id: WindowID, _ frame: CGRect) {
-        guard let win = wm.wins[id] else { return }
+        guard let win = wm.wins[id], !win.popup else { return }
         let size = frame.size
         var content = frame
         if let m = wm.world.locate(id)?.monitor ?? wm.floatMonitor(win), wm.world.monitors.indices.contains(m) {

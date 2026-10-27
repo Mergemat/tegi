@@ -30,7 +30,9 @@ private final class Server: @unchecked Sendable {
     }
     func moveContent(_ id: CGWindowID, to point: CGPoint) { lock.withLock { content[id]?.origin = point } }
     func resizeContent(_ id: CGWindowID, to size: CGSize) { lock.withLock { content[id]?.size = size } }
-    func frame(_ id: CGWindowID) -> CGRect? { lock.withLock { shown[id]?.frame ?? content[id] } }
+    func frame(_ id: CGWindowID) -> CGRect? {
+        lock.withLock { shown[id].flatMap { $0.locksBounds ? $0.frame : content[id] } ?? content[id] }
+    }
     func attach(_ child: CGWindowID, to parent: CGWindowID) {
         lock.withLock {
             content[child] = CGRect(x: 100, y: 100, width: 200, height: 100)
@@ -40,7 +42,7 @@ private final class Server: @unchecked Sendable {
     }
 }
 
-@MainActor private func manager(_ server: Server, authorized: Bool = true) -> WindowManager {
+@MainActor private func manager(_ server: Server, authorized: Bool = true, popup: Bool = false) -> WindowManager {
     var config = Config.builtIn
     config.animations.windowServer = true
     let windowServer = WindowServer(driver: server.driver, settle: 0)
@@ -50,12 +52,39 @@ private final class Server: @unchecked Sendable {
     let element = AXUIElementCreateApplication(getpid())
     let worker = AppWorker(.current) { _, _, _ in }
     for (id, window) in [(1, CGWindowID(99)), (2, CGWindowID(98))] {
-        let info = WindowInfo(windowID: window, tileable: true, popup: false, floatable: true, minimized: false, fullscreen: false,
+        let isPopup = popup && id == 2
+        let info = WindowInfo(windowID: window, tileable: !isPopup, popup: isPopup, floatable: true, minimized: false, fullscreen: false,
                               frame: CGRect(x: 0, y: 0, width: 500, height: 500), title: "test")
-        manager.wins[id] = Win(id: id, element: element, worker: worker, info: info, floating: false)
+        manager.wins[id] = Win(id: id, element: element, worker: worker, info: info, floating: isPopup)
     }
     manager.direct.update()
     return manager
+}
+
+@MainActor @Test func aTrackedPopupKeepsAppGeometryAcrossWorkspaceChanges() {
+    let server = Server(), manager = manager(server, popup: true)
+    let screen = CGRect(x: 0, y: 0, width: 1600, height: 1000)
+    manager.world = World(monitors: [Monitor(id: 1, screen: screen, area: screen)])
+    manager.world.insert(1, config: manager.config)
+    manager.world.pinned = [manager.activeWorkspaceID(on: 0)!]
+    manager.wins[2]?.floatHome = manager.activeWorkspaceID(on: 0)
+    manager.direct.update()
+    server.moveContent(98, to: CGPoint(x: 600, y: 300))
+    server.resizeContent(98, to: CGSize(width: 250, height: 200))
+    let native = CGRect(x: 600, y: 300, width: 250, height: 200)
+    #expect(manager.direct.heard(2))
+    #expect(manager.direct.presented(2) == native)
+    #expect(server.frame(98) == native)
+    manager.world.perform(.focusWorkspaceDown, config: manager.config)
+    manager.direct.update()
+    #expect(manager.windowServer.presentation(of: 98)?.clip == .zero)
+    server.moveContent(98, to: CGPoint(x: 700, y: 400))
+    manager.world.perform(.focusWorkspaceUp, config: manager.config)
+    manager.direct.update()
+    #expect(manager.windowServer.presentation(of: 98)?.clip == screen)
+    #expect(server.frame(98) == native.offsetBy(dx: 100, dy: 100))
+    manager.direct.compositor.endAll()
+    #expect(manager.windowServer.controlledWindows == 0)
 }
 
 @MainActor @Test func directMotionWithoutTheDocksGrantLeavesWindowsWhereTheyAre() {
