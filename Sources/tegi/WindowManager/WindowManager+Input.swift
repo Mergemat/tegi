@@ -48,15 +48,18 @@ extension WindowManager {
         input = InputTap(modifier: config.swipeModifier, claimed: { touch?.claim ?? (0, 0) }) { [weak self] in self?.inputEvent($0) }
         for m in monitors { NSEvent.removeMonitor(m) }
         monitors = [
-            NSEvent.addGlobalMonitorForEvents(matching: .leftMouseDown) { [weak self] _ in
+            NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
                 guard let self else { return }
-                nativePressed = window(at: pointer())
+                pendingFocus = nil
+                let id = window(at: pointer())
+                if event.type == .leftMouseDown { nativePressed = id }
+                // Raised windows don't activate their app on click at a floating level.
+                if !paused, !overview, let id, id != focused, wins[id]?.floating == true { focusWindow(id) }
             },
             NSEvent.addGlobalMonitorForEvents(matching: .leftMouseUp) { [weak self] _ in
                 self?.nativePressed = nil
                 self?.nativeDragEnded()
             },
-            NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in self?.pendingFocus = nil },
             NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved, .leftMouseDragged]) { [weak self] _ in self?.pointerMoved() },
         ].compactMap { $0 }
     }
@@ -215,7 +218,7 @@ extension WindowManager {
         guard world.monitors.indices.contains(m) else { return }
         if s.startIndex == nil {
             guard config.animations.spring(.workspaceSwitch) != nil, snapshots.allowed || mode.liveScenes,
-                  let scene = scene(for: m) else { return }
+                  let scene = scene(for: m), overview || scene.hasWallpaper else { return }
             s.startIndex = world.monitors[m].active
             if !scene.isVisible {
                 let content = sceneContent(m, current: mode.liveScenes)

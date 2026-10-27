@@ -182,7 +182,7 @@ extension WindowManager {
     /// as an app's onboarding panel. macOS raises a tile above them when it takes focus, so they go back on top.
     func keepFloatingOnTop() {
         guard mode.liveScenes else { return }
-        let tiled = Set(wins.values.filter { !$0.fullScreen && !$0.suspended && $0.windowID != 0 }.map(\.windowID))
+        let tiled = Set(wins.values.filter { !$0.floating && !$0.fullScreen && !$0.suspended && $0.windowID != 0 }.map(\.windowID))
         let me = getpid()
         let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
         let screens = world.monitors.map(\.screen)

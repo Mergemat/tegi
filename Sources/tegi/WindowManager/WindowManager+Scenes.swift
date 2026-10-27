@@ -54,7 +54,7 @@ extension WindowManager {
             // A full-screen window's workspace is its Space: macOS animates going there or back, once, so tegi doesn't.
             let spaces = [was?.id, now.id].contains { id in mon.workspaces.first { $0.id == id }.map(holdsFullScreen) ?? false }
             guard let was, was.id != now.id, animate, !spaces, config.animations.spring(.workspaceSwitch) != nil,
-                  snapshots.allowed || mode.liveScenes, let scene = scene(for: m) else { continue }
+                  snapshots.allowed || mode.liveScenes, let scene = scene(for: m), scene.hasWallpaper else { continue }
             var content = sceneContent(m, current: mode.liveScenes)
             var from = Double(was.index), to = mon.active
             if let i = mon.workspaces.firstIndex(where: { $0.id == was.id }) {
@@ -122,6 +122,7 @@ extension WindowManager {
         func monitorIndex() -> Int? { world.monitors.firstIndex { $0.id == display } }
         scene.onFinished = { [weak self] in
             guard let self else { return }
+            mode.sync()
             hideWhenLanded.insert(display)
             let finish = (sceneFinishes[display] ?? 0) + 1
             sceneFinishes[display] = finish

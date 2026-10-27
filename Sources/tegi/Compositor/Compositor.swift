@@ -11,6 +11,7 @@ final class Compositor: NSObject {
     // Under the lock: what to present.
     private var world = World(monitors: [])
     private var windows: [WindowID: CGWindowID] = [:]
+    private var clips: [CGWindowID: CGRect] = [:]
     private var flights: [WindowID: Flight] = [:]
     private var moves: [CGWindowID: WindowServer.Presentation] = [:]
     private var shown: [WindowID: WindowServer.Presentation] = [:]
@@ -53,8 +54,10 @@ final class Compositor: NSObject {
             let removed = Set(self.windows.keys).subtracting(windows.keys)
             for id in removed { shown[id] = nil; flights[id] = nil }
             moves = moves.filter { windows.values.contains($0.key) }
+            for window in moves.keys { moves[window]?.clip = clips[window] }
             self.world = world
             self.windows = windows
+            self.clips = clips
         }
     }
 
@@ -68,6 +71,7 @@ final class Compositor: NSObject {
     func place(_ id: WindowID, frame: CGRect, clip: CGRect?) {
         lock.withLock {
             guard let window = windows[id] else { return }
+            clips[window] = clip
             let presentation = WindowServer.Presentation(frame: frame, clip: clip)
             shown[id] = presentation
             moves[window] = presentation
@@ -80,6 +84,7 @@ final class Compositor: NSObject {
             flights = [:]
             moves = [:]
             shown = [:]
+            clips = [:]
             server.releaseAll()
         }
     }
@@ -89,6 +94,7 @@ final class Compositor: NSObject {
             shown[id] = nil
             flights[id] = nil
             if let window = windows.removeValue(forKey: id) {
+                clips[window] = nil
                 moves[window] = nil
                 server.release([window])
             }
@@ -130,7 +136,7 @@ final class Compositor: NSObject {
             guard let window = windows[id], world.monitors.indices.contains(flight.monitor) else { continue }
             let done = flight.isDone(at: t)
             let frame = (done ? flight.target : flight.frame(at: t)).roundedToPoints
-            let presentation = WindowServer.Presentation(frame: frame, clip: world.monitors[flight.monitor].screen, resizeTo: done ? nil : flight.target.size)
+            let presentation = WindowServer.Presentation(frame: frame, clip: clips[window] ?? world.monitors[flight.monitor].screen, resizeTo: done ? nil : flight.target.size)
             if shown[id] != presentation {
                 batch[window] = presentation
                 shown[id] = presentation

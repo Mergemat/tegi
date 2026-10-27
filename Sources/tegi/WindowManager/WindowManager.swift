@@ -39,6 +39,7 @@ final class Win {
 final class WindowManager {
     var world = World(monitors: [])
     var config: Config
+    let frontmostPID: () -> pid_t?
     var paused = false
     var onChange: () -> Void = {}
     var onHotkeyOverlay: () -> Void = {}
@@ -129,9 +130,11 @@ final class WindowManager {
 
     var canCapture: Bool { snapshots.allowed }
 
-    init(config: Config, windowServer: WindowServer = WindowServer()) {
+    init(config: Config, windowServer: WindowServer = WindowServer(),
+         frontmostPID: @escaping () -> pid_t? = { NSWorkspace.shared.frontmostApplication?.processIdentifier }) {
         self.config = config
         self.windowServer = windowServer
+        self.frontmostPID = frontmostPID
         mode.start()
     }
 
@@ -755,6 +758,8 @@ final class WindowManager {
     }
 
     func focusChanged(_ el: AXUIElement, _ worker: AppWorker) {
+        // Apps also report their focused window while another app owns keyboard focus.
+        guard frontmostPID() == worker.pid else { return }
         guard let id = ids[el] else {
             // Some apps announce a window before it has a role; it has one by the time it takes focus.
             worker.read(el) { [weak self] info in
@@ -769,9 +774,9 @@ final class WindowManager {
         if let win = wins[id], win.fullScreen, windowDescription(win.windowID)?[kCGWindowIsOnscreen as String] as? Bool != true {
             return
         }
+        // An acknowledgement can arrive before the previous window's last focus event.
         if let p = pendingFocus, Date() < p.until {
             guard p.id == id else { return }
-            pendingFocus = nil
         }
         focused = id
         recent.focused(id)
@@ -845,7 +850,7 @@ final class WindowManager {
     }
 
     func syncFocus() {
-        guard let app = NSWorkspace.shared.frontmostApplication, let worker = workers[app.processIdentifier] else { return }
+        guard let pid = frontmostPID(), let worker = workers[pid] else { return }
         worker.focusedWindow { [weak self] el in if let el { self?.focusChanged(el, worker) } }
     }
 
