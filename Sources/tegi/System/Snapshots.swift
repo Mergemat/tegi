@@ -85,6 +85,14 @@ final class Snapshots {
                 Corners.isBlank(width: surface.width, height: surface.height, alpha: alpha))
     }
 
+    /// A window's size in points as the window server has it right now.
+    private static func size(_ id: CGWindowID) -> CGSize? {
+        guard let info = CGWindowListCopyWindowInfo([.optionIncludingWindow], id) as? [[String: Any]],
+              let bounds = info.first?[kCGWindowBounds as String] as? NSDictionary,
+              let rect = CGRect(dictionaryRepresentation: bounds) else { return nil }
+        return rect.size
+    }
+
     private static func displaySpace() -> (space: CGColorSpace, name: CFString) {
         let space = NSScreen.main?.colorSpace?.cgColorSpace ?? CGColorSpace(name: CGColorSpace.sRGB)!
         if let name = space.name { return (space, name) }
@@ -130,7 +138,8 @@ final class Snapshots {
         }
     }
 
-    func refresh(_ windows: [(id: WindowID, windowID: CGWindowID)], scale: CGFloat, updated: @escaping (WindowID) -> Void) {
+    /// `tries` counts the pictures of a window taken while it was resizing; a few more follow until it holds still.
+    func refresh(_ windows: [(id: WindowID, windowID: CGWindowID)], scale: CGFloat, tries: Int = 0, updated: @escaping (WindowID) -> Void) {
         let wanted = windows.filter { $0.windowID != 0 && !inFlight.contains($0.id) }
         guard allowed, !wanted.isEmpty else { return }
         inFlight.formUnion(wanted.map(\.id))
@@ -138,16 +147,20 @@ final class Snapshots {
         Task {
             let content = try? await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: false)
             let byID = Dictionary((content?.windows ?? []).map { ($0.windowID, $0) }, uniquingKeysWith: { a, _ in a })
-            await withTaskGroup(of: (WindowID, IOSurface?, Double?, Bool).self) { group in
+            await withTaskGroup(of: ((id: WindowID, windowID: CGWindowID), IOSurface?, Double?, Bool, Bool).self) { group in
                 for w in wanted {
                     guard let window = byID[w.windowID] else {
-                        group.addTask { (w.id, nil, nil, false) }
+                        group.addTask { (w, nil, nil, false, false) }
                         continue
                     }
                     group.addTask {
+                        // A window bigger than the size asked for comes back shrunk to fit, corners and all, so a
+                        // just-opened window that tegi resizes after the list above was taken would measure small.
+                        // Its size is asked for again right before the picture, and checked again after it.
+                        let size = Self.size(window.windowID) ?? window.frame.size
                         let config = SCStreamConfiguration()
-                        config.width = Int(window.frame.width * scale)
-                        config.height = Int(window.frame.height * scale)
+                        config.width = Int(size.width * scale)
+                        config.height = Int(size.height * scale)
                         config.showsCursor = false
                         config.ignoreShadowsSingleWindow = true
                         let filter = SCContentFilter(desktopIndependentWindow: window)
@@ -159,13 +172,20 @@ final class Snapshots {
                            let image = try? await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config) {
                             measured = Self.measure(image)
                         }
-                        return (w.id, surface, measured?.radius.map { $0 / scale }, measured?.blank ?? false)
+                        // Resized while it was taken, the picture may be shrunk: no radius from it.
+                        let unchanged = Self.size(window.windowID).map { abs($0.width - size.width) < 1 && abs($0.height - size.height) < 1 } ?? true
+                        return (w, surface, unchanged ? measured?.radius.map { $0 / scale } : nil, measured?.blank ?? false, !unchanged)
                     }
                 }
-                for await (id, image, radius, blank) in group {
+                for await (w, image, radius, blank, resizing) in group {
+                    let id = w.id
                     await MainActor.run {
                         self.inFlight.remove(id)
                         if let radius { self.radii[id] = radius }
+                        // A window just opened is often still being sized; its corners are measured once it holds still.
+                        if resizing, tries < 4 {
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { self.refresh([w], scale: scale, tries: tries + 1, updated: updated) }
+                        }
                         if image != nil { if blank { self.blank.insert(id) } else { self.blank.remove(id) } }
                         if let image {
                             self.images[id] = image
