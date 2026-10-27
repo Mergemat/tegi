@@ -26,6 +26,10 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # The runner images turn Reduce Motion on, and tegi doesn't animate then; release.sh runs the tests, which describe motion.
+      - name: Allow motion
+        run: defaults write com.apple.universalaccess reduceMotion -bool false
+
       - name: Build
         run: |
           ./scripts/release.sh "${GITHUB_REF_NAME#v}"
