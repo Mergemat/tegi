@@ -11,7 +11,10 @@ extension WindowManager {
     func contentAnswered(_ id: WindowID) {
         guard !paused, wins[id] != nil else { return }
         mode.refresh(id)
-        presentationCommitted(settled: !motion.isMoving)
+        // Apps and the window server answer every frame of every moving window, and each redraw asks the window server
+        // where windows are; while anything flies, the display link already redraws once a frame.
+        guard !motion.isMoving else { return }
+        presentationCommitted(settled: true)
     }
 
     func presentationCommitted(settled: Bool) {
