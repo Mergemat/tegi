@@ -66,8 +66,9 @@ final class WelcomeWindow {
     }
 
     private func make() -> NSWindow {
-        let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 480, height: 480),
-                              styleMask: [.titled, .closable, .fullSizeContentView], backing: .buffered, defer: false)
+        let window = FloatingPanel(contentRect: CGRect(x: 0, y: 0, width: 480, height: 480),
+                                   styleMask: [.titled, .closable, .fullSizeContentView, .nonactivatingPanel], backing: .buffered, defer: false)
+        window.hidesOnDeactivate = false
         chrome(window)
         window.isReleasedWhenClosed = false
         // It can't be minimized or resized, so their greyed-out buttons would only look broken.

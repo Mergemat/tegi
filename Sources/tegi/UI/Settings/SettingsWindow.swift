@@ -2,6 +2,11 @@ import AppKit
 import SwiftUI
 import TegiCore
 
+final class FloatingPanel: NSPanel {
+    // A tile's app can remain active while the panel receives keyboard input.
+    override var canBecomeKey: Bool { true }
+}
+
 final class SettingsWindow {
     let model: SettingsModel
     private var window: NSWindow?
@@ -19,8 +24,11 @@ final class SettingsWindow {
     }
 
     private func make() -> NSWindow {
-        let window = NSWindow(contentViewController: hosting(SettingsView(model: model)))
-        window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
+        let window = FloatingPanel(contentRect: .zero,
+                                   styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView, .nonactivatingPanel],
+                                   backing: .buffered, defer: false)
+        window.hidesOnDeactivate = false
+        window.contentViewController = hosting(SettingsView(model: model))
         window.title = "tegi Settings"
         chrome(window)
         window.isReleasedWhenClosed = false
@@ -41,6 +49,8 @@ func hosting<V: View>(_ view: V) -> NSHostingController<V> {
 
 /// The same chrome for every tegi window: a hidden toolbar, so the buttons sit inset and the corners match.
 func chrome(_ window: NSWindow) {
+    // tegi's own windows stay above tiles even when keyboard focus returns to another app.
+    window.level = .floating
     window.toolbar = NSToolbar(identifier: "tegi")
     window.toolbarStyle = .unified
     window.titlebarAppearsTransparent = true
