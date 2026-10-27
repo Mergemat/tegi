@@ -25,7 +25,7 @@ final class FocusRing {
         let window = NSWindow(contentRect: .zero, styleMask: .borderless, backing: .buffered, defer: false)
         let ring = CALayer()
         var last: Drawn?
-        var above: CGWindowID = 0
+        var below: CGWindowID = 0
 
         init() {
             window.isOpaque = false
@@ -81,19 +81,20 @@ final class FocusRing {
 
     private func screen(_ display: UInt32) -> NSScreen? { NSScreen.screens.first { $0.displayID == display } }
 
-    // Directly above the window it rings, so whatever sits on top of that window covers the ring too. The ring is drawn
-    // just outside the window, so the window coming forward past it doesn't hide it.
-    private func show(_ overlay: Overlay, on screen: NSScreen, above window: CGWindowID) {
+    // Directly below the window it rings, so whatever sits on top of that window covers the ring too. The ring is drawn
+    // just outside the window, so it shows from beneath; above, a click raises the window past it, and the window's
+    // shadow blinks over the ring until tegi hears and puts the ring back.
+    private func show(_ overlay: Overlay, on screen: NSScreen, below window: CGWindowID) {
         if overlay.window.frame != screen.frame { overlay.window.setFrame(screen.frame, display: false) }
-        guard !overlay.window.isVisible || overlay.above != window else { return }
-        overlay.above = window
-        if window != 0 { overlay.window.order(.above, relativeTo: Int(window)) } else { overlay.window.orderFrontRegardless() }
+        guard !overlay.window.isVisible || overlay.below != window else { return }
+        overlay.below = window
+        if window != 0 { overlay.window.order(.below, relativeTo: Int(window)) } else { overlay.window.orderFrontRegardless() }
     }
 
     /// For after windows were reordered above the ringed ones.
     func restack() {
-        for overlay in overlays.values where overlay.window.isVisible && overlay.above != 0 {
-            overlay.window.order(.above, relativeTo: Int(overlay.above))
+        for overlay in overlays.values where overlay.window.isVisible && overlay.below != 0 {
+            overlay.window.order(.below, relativeTo: Int(overlay.below))
         }
     }
 
@@ -112,7 +113,7 @@ final class FocusRing {
             overlay.last = nil
             return
         }
-        show(overlay, on: screen, above: target.window)
+        show(overlay, on: screen, below: target.window)
         let w = config.focusRingWidth
         let rect = local(frame, in: target.screen).insetBy(dx: -w, dy: -w)
         let color = target.active ? config.focusRingColor : config.focusRingInactiveColor
