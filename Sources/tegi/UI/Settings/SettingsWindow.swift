@@ -49,7 +49,7 @@ func chrome(_ window: NSWindow) {
 }
 
 enum Pane: String, CaseIterable, Identifiable {
-    case layout, workspaces, apps, looks, overlays, motion, hotkeys, gestures, about
+    case layout, workspaces, apps, direct, looks, overlays, motion, hotkeys, gestures, about
     var id: Self { self }
 
     var title: String {
@@ -62,6 +62,7 @@ enum Pane: String, CaseIterable, Identifiable {
         case .gestures: "Gestures"
         case .hotkeys: "Hotkeys"
         case .apps: "Apps"
+        case .direct: "Direct mode"
         case .about: "About"
         }
     }
@@ -76,6 +77,7 @@ enum Pane: String, CaseIterable, Identifiable {
         case .gestures: "Swipes, the modifier and the pointer."
         case .hotkeys: "One key for tegi, and Shift takes the window along."
         case .apps: "Where apps open, and what starts with tegi."
+        case .direct: "tegi presents your windows through the window server."
         case .about: "Hello!"
         }
     }
@@ -90,6 +92,7 @@ enum Pane: String, CaseIterable, Identifiable {
         case .gestures: "hand.draw.fill"
         case .hotkeys: "command"
         case .apps: "app.badge.fill"
+        case .direct: "bolt.fill"
         case .about: "heart.fill"
         }
     }
@@ -97,7 +100,7 @@ enum Pane: String, CaseIterable, Identifiable {
     /// The rail's heading this section sits under; About sits apart, under none.
     var group: String? {
         switch self {
-        case .layout, .workspaces, .apps: "Windows"
+        case .layout, .workspaces, .apps, .direct: "Windows"
         case .looks, .overlays, .motion: "Look & feel"
         case .hotkeys, .gestures: "Controls"
         case .about: nil
@@ -114,6 +117,7 @@ enum Pane: String, CaseIterable, Identifiable {
         case .gestures: SwiftUI.Color(hex: 0x3fcf8e)
         case .hotkeys: SwiftUI.Color(hex: 0x8a90a8)
         case .apps: SwiftUI.Color(hex: 0x2fc4d8)
+        case .direct: SwiftUI.Color(hex: 0xe36bff)
         case .about: SwiftUI.Color(hex: 0xff6b81)
         }
     }
@@ -231,6 +235,7 @@ struct SettingsView: View {
         case .gestures: GesturesPane()
         case .hotkeys: HotkeysPane()
         case .apps: AppsPane()
+        case .direct: DirectPane()
         case .about: AboutPane()
         }
     }

@@ -492,6 +492,18 @@ struct ColorRow: View {
 
 // MARK: Motion
 
+struct DirectPane: View {
+    @EnvironmentObject var model: SettingsModel
+
+    var body: some View {
+        Card {
+            ToggleRow(title: "Direct mode",
+                      detail: model.motionProblem ?? "Smoother motion, a live overview, and hidden windows gone completely. Needs SIP off.",
+                      key: ["window-server-motion"], isOn: model.shown.animations.windowServer, last: true, on: ["on"], off: ["off"])
+        }
+    }
+}
+
 struct MotionPane: View {
     @EnvironmentObject var model: SettingsModel
     @State private var act = Animations.Name.windowMovement
@@ -512,9 +524,6 @@ struct MotionPane: View {
         Card {
             ToggleRow(title: "Animations", detail: "Off, or with macOS's Reduce Motion, windows jump into place.",
                       key: ["animations"], isOn: a.on, on: ["on"], off: ["off"])
-            ToggleRow(title: "Direct window motion",
-                      detail: model.motionProblem ?? "Smoother motion and a live overview. Needs SIP off.",
-                      key: ["window-server-motion"], isOn: a.windowServer, on: ["on"], off: ["off"])
             SliderRow(title: "Speed", detail: "Stretches every animation at once.", key: ["animation-slowdown"], value: Double(speed(a.slowdown)),
                       range: 0...Double(Self.speeds.count - 1), last: true, format: { "\(number(Self.speeds[Int($0)]))×" },
                       live: { $0.animations.slowdown = 1 / Self.speeds[Int($1)] }, write: { [number(1 / Self.speeds[Int($0)])] })

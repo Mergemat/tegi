@@ -632,10 +632,6 @@ public struct Config: Equatable {
     # Off, or with macOS's Reduce Motion, windows jump into place.
     animations on
 
-    # Smoother motion and a live overview: windows move through the window server
-    # every display frame. Needs SIP off; if macOS refuses, they stay where they are.
-    window-server-motion off
-
     # Stretches every animation: 2 is twice as slow, 0.5 twice as fast.
     animation-slowdown 1
 
@@ -681,6 +677,13 @@ public struct Config: Equatable {
 
     # Programs to start with tegi.
     #   spawn-at-startup open -a Ghostty
+
+    # DIRECT MODE
+
+    # tegi presents windows through the window server itself: smoother motion,
+    # a live overview, and hidden windows gone completely. Needs SIP off; if
+    # macOS refuses, windows stay where they are.
+    window-server-motion off
 
     # KEYS
     #
