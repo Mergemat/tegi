@@ -229,6 +229,59 @@ private final class Server: @unchecked Sendable {
     #expect(manager.direct.clip(2) == .zero)
 }
 
+@MainActor @Test func workspaceSlidesKeepNativeVisibilityUntilTheHandoff() {
+    _ = NSApplication.shared
+    let server = Server(), manager = manager(server)
+    let screen = CGRect(x: 0, y: 0, width: 1600, height: 1000)
+    manager.world = World(monitors: [Monitor(id: 1, screen: screen, area: screen)])
+    for id in 1...2 { manager.world.insert(id, config: manager.config) }
+    manager.world.perform(.moveWindowToWorkspaceDown, config: manager.config)
+    manager.world.perform(.focusWorkspaceUp, config: manager.config)
+    manager.direct.update()
+    let scene = Scene(area: screen.offsetBy(dx: -20000, dy: -20000), screen: screen,
+                      wallpaper: nil, paper: nil, config: manager.config)
+    defer { scene.close(); manager.direct.compositor.endAll() }
+    manager.scenes[1] = scene
+    scene.show([[], []], at: 0)
+    scene.track(0.4)
+    manager.world.perform(.focusWorkspaceDown, config: manager.config)
+    manager.direct.update()
+    #expect(manager.windowServer.presentation(of: 99)?.clip == screen)
+    #expect(manager.windowServer.presentation(of: 98)?.clip == .zero)
+    scene.hide()
+    manager.direct.update()
+    #expect(manager.windowServer.presentation(of: 99)?.clip == .zero)
+    #expect(manager.windowServer.presentation(of: 98)?.clip == screen)
+}
+
+@MainActor @Test func anOutgoingWorkspaceCannotBeExposedByAnUnfinishedFlight() {
+    let server = Server(), manager = manager(server)
+    let screen = CGRect(x: 0, y: 0, width: 1600, height: 1000)
+    manager.world = World(monitors: [Monitor(id: 1, screen: screen, area: screen)])
+    manager.world.insert(1, config: manager.config)
+    manager.direct.update()
+    let params = SpringParams(stiffness: 400)
+    _ = manager.motion.move(1, from: CGRect(x: 0, y: 0, width: 500, height: 500),
+                            to: CGRect(x: 600, y: 0, width: 500, height: 500), monitor: 0,
+                            at: CACurrentMediaTime(), springs: .init(position: params, size: params, slowdown: 1))
+    #expect(server.nextCommit()?[99]?.clip == screen)
+    manager.world.perform(.focusWorkspaceDown, config: manager.config)
+    manager.direct.update()
+    _ = manager.motion.move(1, from: .zero,
+                            to: CGRect(x: 600, y: 0, width: 700, height: 500), monitor: 0,
+                            at: CACurrentMediaTime(), springs: .init(position: params, size: params, slowdown: 1))
+    var next: WindowServer.Presentation?
+    while let commit = server.nextCommit() {
+        guard commit[99]?.resizeTo?.width == 700 else { continue }
+        next = commit[99]
+        break
+    }
+    #expect(next != nil)
+    #expect(next?.clip == .zero)
+    manager.motion.cancel()
+    manager.direct.compositor.endAll()
+}
+
 @MainActor @Test func anAttachedWindowIsControlledAndReportedBeforeAccessibilityDiscoversIt() {
     let server = Server(), manager = manager(server)
     var reported = manager.windowServer.controlledWindows

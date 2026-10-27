@@ -418,7 +418,7 @@ final class WindowServer {
                     presentations[id] = Presentation(frame: frame, clip: clips[id])
                 }
             }
-            for id in roots.intersection(appOwned) { presentations[id]?.clip = clips[id] }
+            for id in roots where clips[id] != nil || appOwned.contains(id) { presentations[id]?.clip = clips[id] }
             commit(presentations, synchronous: true)
         }
     }

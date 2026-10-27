@@ -184,6 +184,13 @@ final class DirectMotion: MotionMode {
     }
 
     func clip(_ id: WindowID) -> CGRect {
+        let monitor = wm.world.locate(id)?.monitor ?? wm.wins[id].flatMap(wm.floatMonitor)
+        if let monitor, wm.world.monitors.indices.contains(monitor),
+           let scene = wm.scenes[wm.world.monitors[monitor].id], scene.isVisible, !scene.inOverview, !scene.isSettled,
+           let win = wm.wins[id], let clip = server.presentation(of: win.windowID)?.clip {
+            // Changing native visibility under a moving preview can expose a blank frame.
+            return clip
+        }
         if let win = wm.wins[id], win.floating {
             guard let m = wm.floatMonitor(win), wm.world.monitors.indices.contains(m),
                   win.floatHome == wm.activeWorkspaceID(on: m) else { return .zero }

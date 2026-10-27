@@ -122,6 +122,7 @@ extension WindowManager {
         func monitorIndex() -> Int? { world.monitors.firstIndex { $0.id == display } }
         scene.onFinished = { [weak self] in
             guard let self else { return }
+            mode.sync()
             hideWhenLanded.insert(display)
             let finish = (sceneFinishes[display] ?? 0) + 1
             sceneFinishes[display] = finish
