@@ -254,6 +254,23 @@ private final class Server: @unchecked Sendable {
     #expect(manager.windowServer.presentation(of: 98)?.clip == screen)
 }
 
+@MainActor @Test func startupWorkspaceSwitchesDoNotShowAnUnloadedWallpaper() {
+    _ = NSApplication.shared
+    let server = Server(), manager = manager(server)
+    let screen = CGRect(x: 0, y: 0, width: 1600, height: 1000)
+    manager.world = World(monitors: [Monitor(id: 1, screen: screen, area: screen)])
+    manager.world.insert(1, config: manager.config)
+    let old = manager.activeWorkspaceID(on: 0)!
+    manager.shown[1] = (old, 0)
+    let scene = Scene(area: screen.offsetBy(dx: -20000, dy: -20000), screen: screen,
+                      wallpaper: nil, paper: nil, config: manager.config)
+    defer { scene.close(); manager.direct.compositor.endAll() }
+    manager.scenes[1] = scene
+    manager.world.perform(.focusWorkspaceDown, config: manager.config)
+    manager.followWorkspaces(animate: true)
+    #expect(!scene.isVisible)
+}
+
 @MainActor @Test func anOutgoingWorkspaceCannotBeExposedByAnUnfinishedFlight() {
     let server = Server(), manager = manager(server)
     let screen = CGRect(x: 0, y: 0, width: 1600, height: 1000)

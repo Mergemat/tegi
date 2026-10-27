@@ -118,6 +118,7 @@ final class Scene: NSObject {
     }
 
     var isVisible: Bool { !root.isHidden }
+    var hasWallpaper: Bool { wallpaper != nil }
 
     func setWallpaper(_ image: Any?, paper: IOSurface?) {
         wallpaper = image

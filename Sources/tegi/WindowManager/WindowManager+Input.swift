@@ -218,7 +218,7 @@ extension WindowManager {
         guard world.monitors.indices.contains(m) else { return }
         if s.startIndex == nil {
             guard config.animations.spring(.workspaceSwitch) != nil, snapshots.allowed || mode.liveScenes,
-                  let scene = scene(for: m) else { return }
+                  let scene = scene(for: m), overview || scene.hasWallpaper else { return }
             s.startIndex = world.monitors[m].active
             if !scene.isVisible {
                 let content = sceneContent(m, current: mode.liveScenes)
