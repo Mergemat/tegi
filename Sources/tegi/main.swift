@@ -25,7 +25,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var problems: [String] = []
     private var watchers: [DispatchSourceFileSystemObject] = []
     private var signals: [DispatchSourceSignal] = []
-    private let welcome = WelcomeWindow()
+    private lazy var welcome = WelcomeWindow(model: settingsModel)
     private lazy var settingsModel: SettingsModel = {
         let model = SettingsModel(url: configURL)
         model.onPermissions = { [weak self] in self?.welcome.show() }
@@ -48,27 +48,31 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
             source.resume()
             signals.append(source)
         }
+        if UserDefaults.standard.object(forKey: "onboarded") == nil {
+            // From before the welcome had to be finished: a config means it was.
+            let upgrading = FileManager.default.fileExists(atPath: configURL.path)
+            UserDefaults.standard.set(upgrading, forKey: "onboarded")
+            // Before the welcome shows, so its toggle has the last word.
+            if !upgrading && installed { try? SMAppService.mainApp.register() }
+        }
         welcome.onRestart = { [weak self] in self?.relaunch() }
-        if WelcomeWindow.needed { welcome.show() }
+        welcome.onClose = { [weak self] in self?.startWhenReady() }
+        // Listening from launch, so a tegi still waiting on its welcome can be quit from the command line.
+        ipc = IPC.Server { [weak self] in self?.handle($0) ?? "error: tegi is starting" }
         // Turned off while tegi wasn't running, perhaps with Accessibility taken away since.
         if let text = try? String(contentsOf: configURL, encoding: .utf8), let config = try? Config.parse(text),
            !config.animations.windowServer {
             WindowServer.forget(asking: false)
         }
-        startWhenTrusted()
+        // Tiling, the cheat sheet and the first-run banner wait for the welcome to close, so they don't cover it.
+        if WelcomeWindow.needed { welcome.show() } else { startWhenReady() }
     }
 
-    private func startWhenTrusted() {
-        guard AXIsProcessTrusted() else {
-            problems = ["Needs Accessibility access to move windows"]
-            refresh()
-            DistributedNotificationCenter.default().addObserver(forName: .init("com.apple.accessibility.api"), object: nil, queue: .main) { [weak self] _ in
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                    guard let self, self.wm == nil, AXIsProcessTrusted() else { return }
-                    self.start()
-                }
-            }
-            return
+    private func startWhenReady() {
+        guard wm == nil else { return }
+        guard !WelcomeWindow.needed else {
+            problems = ["Setup isn't finished, so tegi isn't tiling"]
+            return refresh()
         }
         start()
     }
@@ -96,13 +100,11 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         bind(wm.config)
         wm.start()
-        ipc = IPC.Server { [weak self] in self?.handle($0) ?? "error: tegi is starting" }
         watchConfig()
         refresh()
         let cheatSheet = wm.config.hotkeyOverlayAtStartup
         if cheatSheet == .always || (cheatSheet == .firstTime && firstRun) { overlay.show(wm.config) }
         if firstRun {
-            if installed { try? SMAppService.mainApp.register() }
             banner.show("Created a config at ~/.config/tegi/config", for: 8)
         }
     }
@@ -168,7 +170,11 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func handle(_ request: String) -> String {
         let words = request.split(whereSeparator: \.isWhitespace).map(String.init)
-        guard let wm else { return "error: tegi is waiting for Accessibility access" }
+        if words.first == "quit" {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { self.quit() }
+            return "ok"
+        }
+        guard let wm else { return "error: tegi is waiting for its permissions" }
         switch words.first {
         case "ping":
             return "ok"
@@ -188,9 +194,6 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
             if command != .showHotkeyOverlay { overlay.hide() }
             wm.run(command)
-            return "ok"
-        case "quit":
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { self.quit() }
             return "ok"
         default:
             return "error: use action <command>, state, event-stream or quit"
@@ -246,7 +249,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
             menu.addItem(item("Show Hotkeys", #selector(showHotkeys)))
             menu.addItem(item(wm.paused ? "Resume Tiling" : "Pause Tiling", #selector(togglePause)))
         } else {
-            menu.addItem(item("Open Accessibility Settings…", #selector(openAccessibility)))
+            menu.addItem(item("Finish Setup…", #selector(finishSetup)))
         }
         if installed {
             let login = item("Start at Login", #selector(toggleLogin))
@@ -322,9 +325,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")!)
     }
 
-    @objc private func openAccessibility() {
-        NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
-    }
+    @objc private func finishSetup() { welcome.show() }
 
     @objc private func quitFromMenu() { quit() }
 

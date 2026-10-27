@@ -205,8 +205,8 @@ extension WindowManager {
         }
     }
 
-    /// After macOS raises a tile, which apps finish doing after tegi hears they took focus: the ring and the windows that
-    /// float go back above it.
+    /// After macOS raises a tile, which apps finish doing after tegi hears they took focus: the ring goes back under it
+    /// and the windows that float back above it.
     func restack() {
         // Paused, tegi leaves the windows alone.
         guard !paused else { return }
