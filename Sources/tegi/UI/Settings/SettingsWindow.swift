@@ -25,17 +25,16 @@ final class SettingsWindow {
 
     private func make() -> NSWindow {
         let window = FloatingPanel(contentRect: .zero,
-                                   styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView, .nonactivatingPanel],
+                                   styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView, .nonactivatingPanel],
                                    backing: .buffered, defer: false)
         window.hidesOnDeactivate = false
         window.contentViewController = hosting(SettingsView(model: model))
         window.title = "tegi Settings"
         chrome(window)
         window.isReleasedWhenClosed = false
-        window.setContentSize(CGSize(width: 820, height: 660))
-        window.minSize = CGSize(width: 720, height: 560)
+        window.standardWindowButton(.zoomButton)?.isHidden = true
+        window.setContentSize(CGSize(width: 900, height: 700))
         window.center()
-        window.setFrameAutosaveName("tegi.settings")
         return window
     }
 }
