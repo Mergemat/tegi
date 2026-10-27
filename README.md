@@ -4,7 +4,7 @@
 
 niri's scrollable tiling, on macOS. Columns on a strip that scrolls sideways, workspaces stacked vertically, nothing ever squished. No SIP changes.
 
-<p align="center"><img src="https://github.com/Mergemat/tegi/releases/download/v0.3.6/tegi-demo.gif" alt="Windows tiling on a scrolling strip, stacking into columns, moving between workspaces, and the overview"></p>
+<p align="center"><img src="https://github.com/Mergemat/tegi/releases/download/v0.5.0/tegi-demo.gif" alt="Windows tiling on a scrolling strip as they open, a terminal stacking under the editor, a column changing width and maximizing, moving to another workspace, and the overview"></p>
 
 ```sh
 brew trust mergemat/tap
