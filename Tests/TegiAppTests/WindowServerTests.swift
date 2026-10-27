@@ -17,24 +17,6 @@ private final class Server {
     }
 }
 
-@Test func floatingWindowsKeepTheirLayerUntilTheyLeaveManagement() {
-    var levels: [CGWindowID: Int32] = [1: 0, 2: 2, 3: 8]
-    let driver = WindowServer.Driver(bounds: { _ in nil }, submit: { _, _, _ in },
-                                    level: { levels[$0] }, setLevel: { levels[$0] = $1 })
-    let server = WindowServer(driver: driver)
-    server.configure(enabled: true)
-    _ = server.acceptAuthorization(connection: WindowServer.connectionID)
-    server.float([1, 2, 3])
-    #expect(levels == [1: 3, 2: 3, 3: 8])
-    server.float([2, 3])
-    #expect(levels[1] == 0)
-    server.release([2])
-    #expect(levels[2] == 2)
-    server.float([1])
-    server.configure(enabled: false)
-    #expect(levels == [1: 0, 2: 2, 3: 8])
-}
-
 @Test func aSilentDenialStopsSubmittingUntilTurnedOnAgain() {
     let server = Server()
     server.refuses = true

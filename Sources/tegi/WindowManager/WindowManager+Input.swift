@@ -51,10 +51,7 @@ extension WindowManager {
             NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
                 guard let self else { return }
                 pendingFocus = nil
-                let id = window(at: pointer())
-                if event.type == .leftMouseDown { nativePressed = id }
-                // Raised windows don't activate their app on click at a floating level.
-                if !paused, !overview, let id, id != focused, wins[id]?.floating == true { focusWindow(id) }
+                if event.type == .leftMouseDown { nativePressed = window(at: pointer()) }
             },
             NSEvent.addGlobalMonitorForEvents(matching: .leftMouseUp) { [weak self] _ in
                 self?.nativePressed = nil

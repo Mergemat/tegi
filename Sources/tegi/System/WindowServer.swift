@@ -42,8 +42,6 @@ final class WindowServer {
         var submit: ([CGWindowID: Presentation], Set<CGWindowID>, Bool) -> Void
         var associated: (CGWindowID) -> [CGWindowID] = { _ in [] }
         var order: (CGWindowID, Int32, CGWindowID) -> Void = { _, _, _ in }
-        var level: (CGWindowID) -> Int32? = { windowDescription($0)?[kCGWindowLayer as String] as? Int32 }
-        var setLevel: (CGWindowID, Int32) -> Void = { _, _ in }
 
         static func load() -> Driver? {
             guard let library = dlopen("/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight", RTLD_LAZY) else { return nil }
@@ -60,7 +58,6 @@ final class WindowServer {
             typealias Commit = @convention(c) (CFTypeRef, Int32) -> Void
             typealias Associated = @convention(c) (Int32, UInt32) -> Unmanaged<CFArray>?
             typealias Order = @convention(c) (Int32, UInt32, Int32, UInt32) -> Int32
-            typealias SetLevel = @convention(c) (Int32, UInt32, Int32) -> Int32
             guard let connection = symbol("SLSMainConnectionID", as: Connection.self),
                   let bounds = symbol("SLSGetWindowBounds", as: Bounds.self),
                   let create = symbol("SLSTransactionCreate", as: Create.self),
@@ -70,8 +67,7 @@ final class WindowServer {
                   let region = symbol("CGSNewRegionWithRect", as: Region.self),
                   let commit = symbol("SLSTransactionCommit", as: Commit.self),
                   let associated = symbol("SLSCopyAssociatedWindows", as: Associated.self),
-                  let order = symbol("SLSOrderWindow", as: Order.self),
-                  let setLevel = symbol("SLSSetWindowLevel", as: SetLevel.self) else { return nil }
+                  let order = symbol("SLSOrderWindow", as: Order.self) else { return nil }
             let cid = connection()
             return Driver(bounds: { id in
                 var frame = CGRect.zero
@@ -99,8 +95,7 @@ final class WindowServer {
                 commit(transaction, synchronous ? 1 : 0)
             }, associated: { id in
                 associated(cid, id)?.takeRetainedValue() as? [CGWindowID] ?? []
-            }, order: { id, mode, relative in _ = order(cid, id, mode, relative) },
-            setLevel: { id, level in _ = setLevel(cid, id, level) })
+            }, order: { id, mode, relative in _ = order(cid, id, mode, relative) })
         }
     }
 
@@ -112,7 +107,6 @@ final class WindowServer {
     private var families: [CGWindowID: Set<CGWindowID>] = [:]
     private var owned: Set<CGWindowID> = []
     private var excluded: Set<CGWindowID> = []
-    private var originalLevels: [CGWindowID: Int32] = [:]
     private var appOwned: Set<CGWindowID> = []
     var controlledIDs: Set<CGWindowID> { lock.withLock { owned } }
     var controlledWindows: Int { lock.withLock { owned.count } }
@@ -375,22 +369,6 @@ final class WindowServer {
         driver?.order(id, 1, other)
     }
 
-    func float(_ windows: Set<CGWindowID>) {
-        guard active, let driver else { return }
-        lock.withLock {
-            for (id, level) in originalLevels where !windows.contains(id) {
-                driver.setLevel(id, level)
-                originalLevels[id] = nil
-            }
-            let floating = Int32(NSWindow.Level.floating.rawValue)
-            for id in windows where originalLevels[id] == nil {
-                guard let level = driver.level(id), level < floating else { continue }
-                originalLevels[id] = level
-                driver.setLevel(id, floating)
-            }
-        }
-    }
-
     private static func onDisplay(_ frame: CGRect) -> Bool {
         var count: UInt32 = 0
         var displays = [CGDirectDisplayID](repeating: 0, count: 16)
@@ -446,9 +424,6 @@ final class WindowServer {
     func release(_ windows: Set<CGWindowID>) {
         guard let driver else { return }
         lock.withLock {
-            for id in windows {
-                if let level = originalLevels.removeValue(forKey: id) { driver.setLevel(id, level) }
-            }
             excluded.formUnion(windows)
             for id in windows { presentations[id] = nil; families[id] = nil }
             for id in families.keys { families[id]?.subtract(windows) }
@@ -463,8 +438,6 @@ final class WindowServer {
     func releaseAll() {
         guard let driver else { return }
         lock.withLock {
-            for (id, level) in originalLevels { driver.setLevel(id, level) }
-            originalLevels = [:]
             if !owned.isEmpty { driver.submit([:], owned, true) }
             excluded.formUnion(owned)
             presentations = [:]
