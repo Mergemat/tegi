@@ -127,12 +127,34 @@ private final class Server {
     native[1]?.size = CGSize(width: 400, height: 300)
     server.submit([1: .init(frame: CGRect(x: 500, y: 300, width: 400, height: 300), clip: nil)])
     #expect(shown[2]?.frame == CGRect(x: 700, y: 400, width: 400, height: 200))
+    native[1]?.origin = CGPoint(x: 500, y: 300)
+    server.refreshContent(of: 1)
+    native[2] = CGRect(x: 650, y: 450, width: 350, height: 100)
+    #expect(server.presentation(of: 2)?.frame == native[2])
     associated = []
     server.manage([1])
     #expect(shown[2] == nil)
     server.configure(enabled: false)
     #expect(shown.isEmpty)
     #expect(server.controlledWindows == 0)
+}
+
+@Test func aReusedPopupCannotBecomeItsTiledParentsPresentationOwner() {
+    let native = CGRect(x: 100, y: 100, width: 500, height: 500)
+    var shown: [UInt32: WindowServer.Presentation] = [:]
+    let driver = WindowServer.Driver(bounds: { _ in native }, submit: { frames, _, _ in
+        shown.merge(frames) { _, new in new }
+    }, associated: { _ in [1, 2] })
+    let server = WindowServer(driver: driver, settle: 0)
+    server.configure(enabled: true)
+    _ = server.acceptAuthorization(connection: WindowServer.connectionID)
+    server.manage([1, 2], appOwned: [1])
+    let target = native.offsetBy(dx: 400, dy: 200)
+    server.submit([2: .init(frame: target, clip: .zero)])
+    #expect(shown[2]?.frame == target)
+    #expect(shown[1]?.frame == target)
+    #expect(shown[1]?.clip == .zero)
+    server.releaseAll()
 }
 
 @MainActor @Test func nativeRedrawCannotChangeLockedPresentationAndReleaseRestoresIt() async throws {
@@ -198,6 +220,63 @@ private final class Server {
         continuation?.resume()
         continuation = nil
     }
+}
+
+@MainActor @Test func anIdleAttachedPopupCanMoveAndResizeWithoutAnotherParentCommit() async throws {
+    _ = NSApplication.shared
+    let driver = try #require(WindowServer.Driver.load())
+    let parent = NSWindow(contentRect: CGRect(x: -20000, y: -20000, width: 800, height: 600), styleMask: .borderless, backing: .buffered, defer: false)
+    let popup = NSWindow(contentRect: CGRect(x: -19900, y: -19900, width: 400, height: 300), styleMask: .borderless, backing: .buffered, defer: false)
+    for window in [parent, popup] { window.isReleasedWhenClosed = false; window.orderFront(nil) }
+    parent.addChildWindow(popup, ordered: .above)
+    CATransaction.flush()
+    await DisplayFrame().next()
+    let parentID = CGWindowID(parent.windowNumber), popupID = CGWindowID(popup.windowNumber)
+    #expect(driver.associated(parentID).contains(popupID))
+    let server = WindowServer(driver: driver, settle: 0)
+    server.configure(enabled: true)
+    _ = server.acceptAuthorization(connection: WindowServer.connectionID)
+    defer { server.releaseAll(); popup.close(); parent.close() }
+    server.manage([parentID])
+    server.submit([parentID: .init(frame: try #require(server.contentBounds(of: parentID)), clip: nil)])
+    popup.setFrame(CGRect(x: -19800, y: -19800, width: 350, height: 100), display: true)
+    CATransaction.flush()
+    await DisplayFrame().next()
+    let native = try #require(server.contentBounds(of: popupID)), shown = try #require(windowBounds(popupID))
+    // The public window list omits transparent decoration edges from native bounds.
+    #expect(abs(shown.minX - native.minX) <= 6 && abs(shown.minY - native.minY) <= 6)
+    #expect(abs(shown.width - 350) <= 12 && abs(shown.height - 100) <= 12)
+}
+
+@MainActor @Test func anAppOwnedPopupKeepsItsNativeGeometryWhileClipped() async throws {
+    _ = NSApplication.shared
+    let driver = try #require(WindowServer.Driver.load())
+    let popup = NSWindow(contentRect: CGRect(x: -20000, y: -20000, width: 400, height: 300), styleMask: .borderless, backing: .buffered, defer: false)
+    popup.isReleasedWhenClosed = false
+    popup.orderFront(nil)
+    CATransaction.flush()
+    await DisplayFrame().next()
+    let id = CGWindowID(popup.windowNumber)
+    let server = WindowServer(driver: driver, settle: 0)
+    server.configure(enabled: true)
+    _ = server.acceptAuthorization(connection: WindowServer.connectionID)
+    defer { server.releaseAll(); popup.close() }
+    server.manage([id], clips: [id: .zero], appOwned: [id])
+    let stale = try #require(server.contentBounds(of: id))
+    popup.setFrame(CGRect(x: -19800, y: -19800, width: 350, height: 100), display: true)
+    CATransaction.flush()
+    await DisplayFrame().next()
+    // A queued floating placement must not take geometry back from the app.
+    server.submit([id: .init(frame: stale, clip: .zero)])
+    let native = try #require(server.contentBounds(of: id)), shown = try #require(windowBounds(id))
+    #expect(abs(shown.minX - native.minX) <= 6 && abs(shown.minY - native.minY) <= 6)
+    #expect(server.presentation(of: id)?.frame == server.contentBounds(of: id))
+    #expect(server.presentation(of: id)?.clip == .zero)
+    server.manage([id], appOwned: [id])
+    #expect(server.presentation(of: id)?.clip == nil)
+    server.releaseAll()
+    #expect(server.controlledWindows == 0)
+    #expect(windowBounds(id) == shown)
 }
 
 @Test func aFullscreenOrDraggedFamilyMemberCannotBeTakenBackThroughItsSibling() {

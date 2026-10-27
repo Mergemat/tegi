@@ -167,8 +167,12 @@ final class WindowManager {
         ]
         startInput()
         WindowServer.onGeometryChange = { [weak self] window in
-            guard let self, let win = wins.values.first(where: { $0.windowID == window }) else { return }
-            contentAnswered(win.id)
+            guard let self else { return }
+            if let win = wins.values.first(where: { $0.windowID == window }) {
+                contentAnswered(win.id)
+            } else {
+                windowServer.refreshContent(of: window)
+            }
         }
         WindowServer.onFamilyChange = { [weak self] in self?.familyChanged() }
         var restackQueued = false

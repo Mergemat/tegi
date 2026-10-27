@@ -215,6 +215,7 @@ extension WindowManager {
     }
 
     func watchWindowOrder() {
-        WindowServer.watchOrder(of: wins.values.filter { !$0.floating && !$0.suspended && $0.windowID != 0 }.map(\.windowID))
+        let tiled = Set(wins.values.filter { !$0.floating && !$0.suspended && $0.windowID != 0 }.map(\.windowID))
+        WindowServer.watchOrder(of: Array(tiled.union(windowServer.controlledIDs)))
     }
 }
