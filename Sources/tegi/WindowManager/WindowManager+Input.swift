@@ -176,7 +176,7 @@ extension WindowManager {
             case .horizontal:
                 s.tracker.push(-dx, at: time)
                 world.scrollView(monitor: s.monitor, to: s.origin + s.tracker.position, config: config)
-                relayout(tracking: true)
+                queueTrackingLayout()
             case .vertical:
                 s.tracker.push(-dy, at: time)
                 followSwipe(&s)
@@ -208,6 +208,18 @@ extension WindowManager {
             } else {
                 run(dx < 0 ? .focusColumnRight : .focusColumnLeft)
             }
+        }
+    }
+
+    private func queueTrackingLayout() {
+        guard !trackingLayoutQueued else { return }
+        trackingLayoutQueued = true
+        // Preserve every velocity sample, but present only the newest position when input arrives in a burst.
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            trackingLayoutQueued = false
+            guard swipe?.axis == .horizontal else { return }
+            relayout(tracking: true)
         }
     }
 

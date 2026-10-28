@@ -470,3 +470,45 @@ func aLateSizeAnswerCannotReflowAWindowOutsideTilingControl(state: String) throw
     #expect(start <= nextFrame)
     #expect(manager.motion.clock <= nextFrame)
 }
+
+@MainActor @Test(arguments: [false, true], [40, 2400])
+func queuedScrollSamplesPublishOnlyTheLatestWholeStrip(released: Bool, samples: Int) async throws {
+    let server = Server(), manager = manager(server)
+    defer {
+        manager.swipe = nil
+        manager.motion.cancel()
+        manager.ring.update([], tabs: [], config: manager.config)
+        manager.direct.compositor.endAll()
+    }
+    manager.config.defaultColumnWidth = 0.8
+    let screen = CGRect(x: 0, y: 0, width: 1200, height: 800)
+    manager.world = World(monitors: [Monitor(id: 1, screen: screen, area: screen)])
+    for id in 1...2 { manager.world.insert(id, config: manager.config) }
+    manager.world.perform(.focusColumnFirst, config: manager.config)
+    manager.relayout(direct: true)
+    manager.scrolled(.began)
+    var plans: [[WindowID: Flight]] = []
+    let publish = manager.motion.onFlights
+    manager.motion.onFlights = { flights in plans.append(flights); publish(flights) }
+    for step in 1...samples {
+        let dx = (step - 1) % 80 < 40 ? -5.0 : 5.0
+        manager.scrolled(.changed(dx: dx, dy: 0, time: 1 + Double(step) / 240))
+    }
+    let tracker = try #require(manager.swipe?.tracker)
+    #expect(tracker.position == (samples == 40 ? 200 : 0))
+    #expect(abs(abs(tracker.velocity) - 1200) < 0.001)
+    if released { manager.scrolled(.ended(time: 1 + Double(samples) / 240 + 0.015)) }
+    let expected = manager.world.layout(config: manager.config)
+    await withCheckedContinuation { continuation in
+        DispatchQueue.main.async { continuation.resume() }
+    }
+    #expect(!plans.isEmpty)
+    let wholeLatestStrip = plans.allSatisfy { plan in
+        [1, 2].allSatisfy { plan[$0]?.target == expected[$0]?.strip }
+    }
+    #expect(wholeLatestStrip)
+    if released {
+        #expect(manager.swipe == nil)
+        #expect(plans.allSatisfy { $0.values.allSatisfy { $0.x.params != .tracking } })
+    }
+}

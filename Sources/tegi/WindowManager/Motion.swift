@@ -10,6 +10,7 @@ final class Motion: NSObject {
     }
 
     private var flights: [WindowID: Flight] = [:]
+    private var batching = false
     /// Each change to what's flying, for the compositor to present. Flights that land aren't announced: it lands them
     /// itself, on the same springs.
     var onFlights: ([WindowID: Flight]) -> Void = { _ in }
@@ -24,6 +25,16 @@ final class Motion: NSObject {
     private(set) var clock: CFTimeInterval = 0
 
     func isFlying(_ id: WindowID) -> Bool { flights[id] != nil }
+
+    /// A strip moves as a unit; the compositor must not see only half its windows retargeted.
+    func batch(_ updates: () -> Void) {
+        let wasBatching = batching
+        batching = true
+        defer { batching = wasBatching; publish() }
+        updates()
+    }
+
+    private func publish() { if !batching { onFlights(flights) } }
 
     func current(_ id: WindowID, at t: Double) -> (frame: CGRect, monitor: Int)? {
         if let f = flights[id] { return (f.frame(at: t), f.monitor) }
@@ -44,7 +55,7 @@ final class Motion: NSObject {
                              params: springs.position, slowdown: f.x.slowdown)
             }
             flights[id] = f
-            onFlights(flights)
+            publish()
             return true
         }
         guard from != to else { return false }
@@ -52,14 +63,14 @@ final class Motion: NSObject {
                              position: springs.position, size: springs.size, slowdown: springs.slowdown)
         resting[id] = nil
         if stats == nil { stats = (0, t, [:]) }
-        onFlights(flights)
+        publish()
         return true
     }
 
-    func republish() { onFlights(flights) }
+    func republish() { publish() }
 
     func stop(_ id: WindowID, at rest: (CGRect, Int)?) {
-        if flights.removeValue(forKey: id) != nil { onFlights(flights) }
+        if flights.removeValue(forKey: id) != nil { publish() }
         resting[id] = rest
     }
 
@@ -67,13 +78,13 @@ final class Motion: NSObject {
         let before = flights.count
         for id in flights.keys where gone(id) { flights[id] = nil }
         for id in resting.keys where gone(id) { resting[id] = nil }
-        if flights.count != before { onFlights(flights) }
+        if flights.count != before { publish() }
     }
 
     func cancel() {
         for (id, f) in flights { resting[id] = (f.target, f.monitor) }
         flights = [:]
-        onFlights(flights)
+        publish()
         stopLink()
     }
 

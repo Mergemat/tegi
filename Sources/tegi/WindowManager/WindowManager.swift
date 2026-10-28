@@ -117,6 +117,7 @@ final class WindowManager {
 
     var input: InputTap?
     var swipe: Swipe?
+    var trackingLayoutQueued = false
     var overviewSwipe: OverviewSwipe?
     let inputTrace = InputTrace()
     var grab: Grab?
@@ -372,33 +373,35 @@ final class WindowManager {
         homes = Dictionary(world.monitors.flatMap { $0.workspaces.flatMap { ws in ws.columns.flatMap { $0.tiles.map { ($0.id, ws.id) } } } },
                            uniquingKeysWith: { a, _ in a })
         defer { lastViews = views }
-        for (id, p) in placements {
-            guard let win = wins[id], !win.fullScreen, !nativeMoving.contains(id), grab?.window != id || grab?.resize == true else { continue }
-            // A window changing workspace rides the workspace slide's picture, which hides as soon as the slide lands;
-            // flying it across the strip underneath would show it still on its way.
-            let changedWorkspace = wereHomes[id].map { $0 != homes[id] } ?? false
-            var from = motion.current(id, at: now)
-            if let start = mode.start(id, at: now) { from?.frame = start }
-            if animate, !changedWorkspace, let to = p.strip, let from, from.monitor == p.monitor,
-               let springs = springs(from: from.frame, to: to, monitor: p.monitor, views: views,
-                                     override: tracking ? .tracking : nil) {
-                let velocity = fling.flatMap { fling -> Double? in
-                    guard fling.monitor == p.monitor else { return nil }
-                    let distance = to.minX - from.frame.minX
-                    // A clipped destination at an edge must not carry the release speed past that edge and back.
-                    let limit = abs(distance) * springs.position.stiffness.squareRoot() / springs.slowdown
-                    return distance * fling.velocity > 0 ? copysign(min(abs(fling.velocity), limit), fling.velocity) : 0
+        motion.batch {
+            for (id, p) in placements {
+                guard let win = wins[id], !win.fullScreen, !nativeMoving.contains(id), grab?.window != id || grab?.resize == true else { continue }
+                // A window changing workspace rides the workspace slide's picture, which hides as soon as the slide lands;
+                // flying it across the strip underneath would show it still on its way.
+                let changedWorkspace = wereHomes[id].map { $0 != homes[id] } ?? false
+                var from = motion.current(id, at: now)
+                if let start = mode.start(id, at: now) { from?.frame = start }
+                if animate, !changedWorkspace, let to = p.strip, let from, from.monitor == p.monitor,
+                   let springs = springs(from: from.frame, to: to, monitor: p.monitor, views: views,
+                                         override: tracking ? .tracking : nil) {
+                    let velocity = fling.flatMap { fling -> Double? in
+                        guard fling.monitor == p.monitor else { return nil }
+                        let distance = to.minX - from.frame.minX
+                        // A clipped destination at an edge must not carry the release speed past that edge and back.
+                        let limit = abs(distance) * springs.position.stiffness.squareRoot() / springs.slowdown
+                        return distance * fling.velocity > 0 ? copysign(min(abs(fling.velocity), limit), fling.velocity) : 0
+                    }
+                    if motion.move(id, from: from.frame, to: to, monitor: p.monitor, at: now,
+                                   velocity: velocity, springs: springs) {
+                        mode.flying(id, from: from.frame, to: to)
+                        continue
+                    }
                 }
-                if motion.move(id, from: from.frame, to: to, monitor: p.monitor, at: now,
-                               velocity: velocity, springs: springs) {
-                    mode.flying(id, from: from.frame, to: to)
-                    continue
-                }
+                motion.stop(id, at: p.strip.map { ($0, p.monitor) })
+                send(id, mode.rest(id, p))
             }
-            motion.stop(id, at: p.strip.map { ($0, p.monitor) })
-            send(id, mode.rest(id, p))
+            motion.forget { placements[$0] == nil }
         }
-        motion.forget { placements[$0] == nil }
         watchWindowOrder()
         placeFloating()
         if motion.isMoving {
