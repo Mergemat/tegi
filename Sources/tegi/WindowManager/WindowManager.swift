@@ -402,9 +402,9 @@ final class WindowManager {
         watchWindowOrder()
         placeFloating()
         if motion.isMoving {
-            // As the frame the display shows next: the spring's start has nothing to move yet, and waiting for the
-            // display link to come round costs the keypress a frame before anything moves.
-            tick(at: now + 1 / Double(NSScreen.main?.maximumFramesPerSecond ?? 60))
+            // Prime the next real display frame. Input bursts must not advance the clock by a frame per event.
+            let nextFrame = CACurrentMediaTime() + 1 / Double(NSScreen.main?.maximumFramesPerSecond ?? 60)
+            tick(at: max(now, nextFrame))
             motion.run { [weak self] t in self?.tick(at: t) }
         }
         targets = placements

@@ -444,3 +444,29 @@ func aLateSizeAnswerCannotReflowAWindowOutsideTilingControl(state: String) throw
     manager.direct.compositor.endAll()
     manager.ring.update([], tabs: [], config: manager.config)
 }
+
+@MainActor @Test func scrollBurstsCannotScheduleTheReleaseBeyondTheNextDisplayFrame() throws {
+    let server = Server(), manager = manager(server)
+    defer {
+        manager.motion.cancel()
+        manager.ring.update([], tabs: [], config: manager.config)
+        manager.direct.compositor.endAll()
+    }
+    let screen = CGRect(x: 0, y: 0, width: 1200, height: 800)
+    manager.world = World(monitors: [Monitor(id: 1, screen: screen, area: screen)])
+    for id in 1...2 { manager.world.insert(id, config: manager.config) }
+    manager.world.perform(.focusColumnFirst, config: manager.config)
+    manager.relayout(direct: true)
+    var released: Flight?
+    let publish = manager.motion.onFlights
+    manager.motion.onFlights = { flights in released = flights[1]; publish(flights) }
+    manager.scrolled(.began)
+    for step in 1...40 {
+        manager.scrolled(.changed(dx: -5, dy: 0, time: 1 + Double(step) / 240))
+    }
+    manager.scrolled(.ended(time: 1.18))
+    let nextFrame = CACurrentMediaTime() + 1 / Double(NSScreen.main?.maximumFramesPerSecond ?? 60)
+    let start = try #require(released?.x.start)
+    #expect(start <= nextFrame)
+    #expect(manager.motion.clock <= nextFrame)
+}
