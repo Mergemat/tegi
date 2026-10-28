@@ -1,18 +1,48 @@
 import Foundation
 
-/// Trackpad contact frames to gestures, the way macOS's own work: a gesture lasts from the first finger down to the
-/// last one up, its finger count is settled once the fingers have travelled a few millimetres, and movement is measured
-/// finger by finger, so one landing or lifting moves nothing.
+/// Recognizes swipes from a group of contacts moving together, ignoring resting and oversized contacts.
 public struct TouchGestures {
-    /// A finger on the trackpad, at x and y in trackpad widths and heights; y rises away from you.
-    public struct Touch: Equatable {
+    /// Coordinates use trackpad widths and heights; y rises away from the user.
+    public struct Touch: Equatable, Codable {
         public var id: Int32
         public var x, y: Double
+        /// Contact ellipse area in consistent device units. Zero means unavailable.
+        public var area: Double
+        /// MultitouchSupport's native contact state, retained for capture and replay.
+        public var state: Int32
 
-        public init(id: Int32, x: Double, y: Double) {
+        public init(id: Int32, x: Double, y: Double, area: Double = 0, state: Int32 = 4) {
             self.id = id
             self.x = x
             self.y = y
+            self.area = area
+            self.state = state
+        }
+
+        public var isTouching: Bool { state == 3 || state == 4 }
+    }
+
+    public struct Frame: Codable {
+        public var time: Double
+        public var number: Int32
+        public var touches: [Touch]
+        public var valid: Bool
+
+        public init(time: Double, number: Int32, touches: [Touch], valid: Bool = true) {
+            self.time = time
+            self.number = number
+            self.touches = touches
+            self.valid = valid
+        }
+
+        public var isValid: Bool {
+            valid && time.isFinite && time >= 0 && touches.count <= 20
+                && Set(touches.map(\.id)).count == touches.count
+                && touches.allSatisfy {
+                    (0...7).contains($0.state) && (!$0.isTouching ||
+                        ($0.x.isFinite && $0.y.isFinite && $0.area.isFinite
+                         && (-0.2...1.2).contains($0.x) && (-0.2...1.2).contains($0.y)))
+                }
         }
     }
 
@@ -20,78 +50,173 @@ public struct TouchGestures {
         case began(fingers: Int)
         case changed(dx: Double, dy: Double)
         case ended
+        case cancelled
     }
 
-    /// Travel before a gesture is decided: about 5 mm on a laptop's trackpad, so a resting hand's tremor starts nothing.
-    static let decided = 0.03
+    /// How the event tap should route native scroll events for the current contact session.
+    public enum ScrollRouting {
+        case system
+        /// Motion is a candidate; no gesture owns the native scroll yet.
+        case pending
+        case suppress
+        case strip
+    }
+
+    private struct Contact {
+        var origin: Touch
+        var touch: Touch
+        var palm = false
+        var reserved = false
+    }
+
+    private struct Motion {
+        var id: Int32
+        var dx, dy: Double
+        var distance: Double { hypot(dx, dy) }
+    }
 
     private enum Phase {
-        case idle
-        case deciding(count: Int, dx: Double, dy: Double)
-        case swiping(fingers: Int)
-        /// Decided as something else, such as the system's two-finger scroll, until every finger is up.
-        case spent
+        case tracking
+        case system(Set<Int32>)
+        case swiping(Set<Int32>)
+        case finished(Set<Int32>)
     }
 
-    private var phase = Phase.idle
-    private var last: [Int32: Touch] = [:]
-    /// How many fingers (three or more) came down before the gesture was decided, so it's tegi's until every finger is
-    /// up: the scrolls macOS makes of it aren't meant for the window under the pointer. 0 for none.
-    public private(set) var claimed = 0
+    private var phase = Phase.tracking
+    private var contacts: [Int32: Contact] = [:]
+    private var lastAddition: Double?
+    private var lastTime: Double?
+    private var rebase = false
 
-    /// The fingers of a gesture once decided, as they travel: 3 or 4, or 0 before then and after.
-    public var decided: Int {
-        if case .swiping(let fingers) = phase { return fingers }
-        return 0
+    public var scrollRouting: ScrollRouting {
+        switch phase {
+        case .tracking:
+            let available = contacts.values.filter { !$0.palm && !$0.reserved }.count
+            return available >= 3 || (available >= 2 && settling) ? .pending : .system
+        case .system: return .system
+        case .swiping(let ids): return ids.count == 3 ? .strip : .suppress
+        case .finished: return .suppress
+        }
     }
 
     public init() {}
 
-    public mutating func frame(_ touches: [Touch]) -> [Event] {
-        defer {
-            if touches.isEmpty { claimed = 0 }
-            else if case .deciding(let count, _, _) = phase, count >= 3 { claimed = max(claimed, count) }
+    public mutating func frame(_ frame: Frame) -> [Event] {
+        guard frame.isValid else {
+            rebase = true
+            return []
         }
-        let moves = touches.compactMap { t in last[t.id].map { (dx: t.x - $0.x, dy: t.y - $0.y) } }
-        let dx = moves.isEmpty ? 0 : moves.reduce(0) { $0 + $1.dx } / Double(moves.count)
-        let dy = moves.isEmpty ? 0 : moves.reduce(0) { $0 + $1.dy } / Double(moves.count)
-        last = Dictionary(touches.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
-        if touches.isEmpty {
-            defer { phase = .idle }
+        guard lastTime.map({ frame.time > $0 }) ?? true else { return [] }
+        lastTime = frame.time
+        let touches = frame.touches.filter(\.isTouching)
+        let previous = contacts
+        contacts = Dictionary(touches.map { touch in
+            var contact = previous[touch.id] ?? Contact(origin: touch, touch: touch)
+            contact.touch = touch
+            return (touch.id, contact)
+        }, uniquingKeysWith: { _, new in new })
+        if case .tracking = phase, contacts.keys.contains(where: { previous[$0] == nil }) {
+            lastAddition = frame.time
+            // Fingers land on different frames. Compare their motion from the same instant.
+            for id in contacts.keys {
+                let touch = contacts[id]!.touch
+                contacts[id]?.origin = touch
+            }
+        }
+        if contacts.isEmpty {
+            defer { phase = .tracking; rebase = false }
             if case .swiping = phase { return [.ended] }
             return []
         }
+        if rebase {
+            rebase = false
+            if case .tracking = phase { resumeTracking() }
+            else if case .swiping(let ids) = phase, ids.allSatisfy({ contacts[$0] != nil }) { return [] }
+        }
         switch phase {
-        case .idle:
-            phase = .deciding(count: touches.count, dx: 0, dy: 0)
+        case .system(let ids), .finished(let ids):
+            // A resting palm must not keep the next gesture locked to the previous one.
+            if ids.isDisjoint(with: contacts.keys) {
+                resumeTracking()
+            }
             return []
-        case .deciding(let count, var tx, var ty):
-            // Fingers land one by one; the gesture is the one made with however many are down as they travel.
-            guard touches.count == count else {
-                phase = .deciding(count: touches.count, dx: 0, dy: 0)
-                return []
-            }
-            tx += dx
-            ty += dy
-            guard hypot(tx, ty) >= Self.decided else {
-                phase = .deciding(count: count, dx: tx, dy: ty)
-                return []
-            }
-            guard count == 3 || count == 4 else {
-                phase = .spent
-                return []
-            }
-            phase = .swiping(fingers: count)
-            return [.began(fingers: count)]
-        case .swiping(let fingers):
-            // The first finger to lift ends it, before the rest wander as they leave.
-            guard touches.count == fingers else {
-                phase = .spent
+        case .swiping(let ids):
+            // Membership is fixed: a brush adds no motion, and a replacement cannot stand in for a lifted finger.
+            guard ids.allSatisfy({ contacts[$0] != nil }) else {
+                phase = .finished(ids)
+                if ids.isDisjoint(with: contacts.keys) { resumeTracking() }
                 return [.ended]
             }
+            let dx = ids.reduce(0.0) { $0 + (contacts[$1]!.touch.x - previous[$1]!.touch.x) } / Double(ids.count)
+            let dy = ids.reduce(0.0) { $0 + (contacts[$1]!.touch.y - previous[$1]!.touch.y) } / Double(ids.count)
             return [.changed(dx: dx, dy: dy)]
-        case .spent:
-            return []
+        case .tracking:
+            rejectPalms()
+            let moving = movingFingers
+            guard !moving.isEmpty, !settling else { return [] }
+            let dx = moving.reduce(0.0) { $0 + $1.dx } / Double(moving.count)
+            let dy = moving.reduce(0.0) { $0 + $1.dy } / Double(moving.count)
+            // This is normalized travel, not a calibrated physical distance.
+            guard hypot(dx, dy) >= 0.03 else { return [] }
+            let ids = Set(moving.map(\.id))
+            guard ids.count == 3 || ids.count == 4 else {
+                phase = .system(ids)
+                return []
+            }
+            phase = .swiping(ids)
+            return [.began(fingers: ids.count)]
+        }
+    }
+
+    public mutating func cancel() -> [Event] {
+        defer { self = TouchGestures() }
+        if case .swiping = phase { return [.cancelled] }
+        return []
+    }
+
+    /// Contacts already used by a native scroll cannot start another gesture before lifting.
+    public mutating func reserveForNativeScroll() -> [Event] {
+        for id in contacts.keys { contacts[id]?.reserved = true }
+        if case .swiping(let ids) = phase {
+            phase = .system(ids)
+            return [.cancelled]
+        }
+        return []
+    }
+
+    private var settling: Bool { (lastTime ?? 0) - (lastAddition ?? -.infinity) < 0.04 }
+
+    private mutating func resumeTracking() {
+        phase = .tracking
+        lastAddition = lastTime
+        contacts = contacts.mapValues { Contact(origin: $0.touch, touch: $0.touch, palm: $0.palm, reserved: $0.reserved) }
+    }
+
+    private mutating func rejectPalms() {
+        let areas = contacts.values.map(\.touch.area).filter { $0.isFinite && $0 > 0 }.sorted()
+        guard areas.count >= 2 else { return }
+        // The private ellipse units are unverified, so size evidence is relative to other contacts in the frame.
+        let typical = areas[(areas.count - 1) / 2]
+        for id in contacts.keys where contacts[id]!.touch.area.isFinite && contacts[id]!.touch.area > typical * 2.5 {
+            contacts[id]?.palm = true
+        }
+    }
+
+    private var movingFingers: [Motion] {
+        let motions = contacts.values.filter { !$0.palm && !$0.reserved }.map {
+            Motion(id: $0.touch.id, dx: $0.touch.x - $0.origin.x, dy: $0.touch.y - $0.origin.y)
+        }
+        guard !motions.isEmpty else { return [] }
+        func median(_ values: [Double]) -> Double {
+            let sorted = values.sorted(), middle = sorted.count / 2
+            return (sorted[middle] + sorted[(sorted.count - 1) / 2]) / 2
+        }
+        let dx = median(motions.map(\.dx)), dy = median(motions.map(\.dy))
+        let distance = hypot(dx, dy)
+        guard distance >= 0.008 else { return [] }
+        return motions.filter {
+            $0.distance >= max(0.008, distance * 0.5) && $0.distance <= distance * 2.5
+                && ($0.dx * dx + $0.dy * dy) >= 0.8 * $0.distance * distance
         }
     }
 }

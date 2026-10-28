@@ -14,6 +14,7 @@ extension WindowManager {
         // Apps and the window server answer every frame of every moving window, and each redraw asks the window server
         // where windows are; while anything flies, the display link already redraws once a frame.
         guard !motion.isMoving else { return }
+        if let win = wins[id], let radius = windowServer.cornerRadius(of: win.windowID) { win.nativeRadius = radius }
         presentationCommitted(settled: true)
     }
 

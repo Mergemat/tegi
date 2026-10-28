@@ -2,6 +2,16 @@ import AppKit
 import ApplicationServices
 import TegiCore
 
+func confirmedResize(to size: CGSize, applying write: () -> (size: CGSize?, error: AXError)) -> (size: CGSize?, error: AXError) {
+    let first = write()
+    guard first.error == .success else { return (nil, first.error) }
+    guard let actual = first.size,
+          abs(actual.width - size.width) > 1 || abs(actual.height - size.height) > 1 else { return first }
+    // Apps can change title-bar geometry while resizing. Confirm a refusal before learning a permanent minimum.
+    let confirmed = write()
+    return confirmed.error == .success ? confirmed : (nil, confirmed.error)
+}
+
 @_silgen_name("_AXUIElementGetWindow")
 private func _AXUIElementGetWindow(_ element: AXUIElement, _ id: UnsafeMutablePointer<CGWindowID>) -> AXError
 
@@ -43,7 +53,8 @@ extension AXUIElement {
 
     func bool(_ attr: String) -> Bool { (value(attr) as? Bool) ?? false }
 
-    func set(_ attr: String, _ v: CFTypeRef) {
+    @discardableResult
+    func set(_ attr: String, _ v: CFTypeRef) -> AXError {
         AXUIElementSetAttributeValue(self, attr as CFString, v)
     }
 
@@ -92,27 +103,20 @@ extension AXUIElement {
         }
         // macOS measures a resize from where the app last heard its window was, and compositor moves never tell it.
         // Telling it the place first lets the size through unclamped, so the app lays out and draws once.
-        if placed {
-            set(kAXPositionAttribute, p)
-            set(kAXSizeAttribute, s)
-            guard verify, let v = value(kAXSizeAttribute) else { return nil }
-            var actual = CGSize.zero
-            AXValueGetValue(v as! AXValue, .cgSize, &actual)
-            return actual
-        }
+        if !placed { set(kAXSizeAttribute, s) }
+        set(kAXPositionAttribute, p)
         guard verify else {
-            set(kAXSizeAttribute, s)
-            set(kAXPositionAttribute, p)
+            if placed { set(kAXSizeAttribute, s) }
             return nil
         }
-        // macOS clamps a resize at the screen edge nearest the window's current spot.
-        set(kAXSizeAttribute, s)
-        set(kAXPositionAttribute, p)
-        set(kAXSizeAttribute, s)
-        var actual = CGSize.zero
-        guard let v = value(kAXSizeAttribute) else { return nil }
-        AXValueGetValue(v as! AXValue, .cgSize, &actual)
-        return actual
+        // Standard moves need another size write after positioning to undo clamping at the old screen edge.
+        return confirmedResize(to: frame.size) {
+            let error = set(kAXSizeAttribute, s)
+            guard error == .success, let v = value(kAXSizeAttribute) else { return (nil, error) }
+            var actual = CGSize.zero
+            guard AXValueGetValue(v as! AXValue, .cgSize, &actual) else { return (nil, error) }
+            return (actual, error)
+        }.size
     }
 }
 
@@ -271,13 +275,13 @@ final class AppWorker {
             if job.position {
                 actual = job.window.setFrame(job.frame, resize: job.resize, verify: job.verify, placed: job.placed)
             } else {
-                var size = job.frame.size
-                job.window.set(kAXSizeAttribute, AXValueCreate(.cgSize, &size)!)
-                if let value = job.window.value(kAXSizeAttribute), AXValueGetValue(value as! AXValue, .cgSize, &size) {
-                    actual = size
-                } else {
-                    actual = nil
-                }
+                actual = confirmedResize(to: job.frame.size) {
+                    var size = job.frame.size
+                    let error = job.window.set(kAXSizeAttribute, AXValueCreate(.cgSize, &size)!)
+                    guard error == .success, let value = job.window.value(kAXSizeAttribute),
+                          AXValueGetValue(value as! AXValue, .cgSize, &size) else { return (nil, error) }
+                    return (size, error)
+                }.size
             }
             DispatchQueue.main.async {
                 if let actual { job.measured(id, actual) }

@@ -19,6 +19,7 @@ final class Win {
     var fullScreenHome: (workspace: Int, column: Int)?
     var floatHome: Int?
     var floatFrame: CGRect?
+    var nativeRadius: Double?
 
     init(id: WindowID, element: AXUIElement, worker: AppWorker, info: WindowInfo, floating: Bool) {
         self.id = id
@@ -116,7 +117,9 @@ final class WindowManager {
 
     var input: InputTap?
     var swipe: Swipe?
+    var trackingLayoutQueued = false
     var overviewSwipe: OverviewSwipe?
+    let inputTrace = InputTrace()
     var grab: Grab?
     var edgeTimer: Timer?
     var lastWheel: CFTimeInterval = 0
@@ -304,6 +307,7 @@ final class WindowManager {
     func setPaused(_ pause: Bool) {
         guard pause != paused else { return }
         if pause {
+            cancelOverviewSwipe()
             restore()
             paused = true
             ring.update([], tabs: [], config: config)
@@ -313,6 +317,7 @@ final class WindowManager {
             floatHidden = []
             relayout()
         }
+        if input != nil { startInput() }
         onChange()
     }
 
@@ -368,39 +373,41 @@ final class WindowManager {
         homes = Dictionary(world.monitors.flatMap { $0.workspaces.flatMap { ws in ws.columns.flatMap { $0.tiles.map { ($0.id, ws.id) } } } },
                            uniquingKeysWith: { a, _ in a })
         defer { lastViews = views }
-        for (id, p) in placements {
-            guard let win = wins[id], !win.fullScreen, !nativeMoving.contains(id), grab?.window != id || grab?.resize == true else { continue }
-            // A window changing workspace rides the workspace slide's picture, which hides as soon as the slide lands;
-            // flying it across the strip underneath would show it still on its way.
-            let changedWorkspace = wereHomes[id].map { $0 != homes[id] } ?? false
-            var from = motion.current(id, at: now)
-            if let start = mode.start(id, at: now) { from?.frame = start }
-            if animate, !changedWorkspace, let to = p.strip, let from, from.monitor == p.monitor,
-               let springs = springs(from: from.frame, to: to, monitor: p.monitor, views: views,
-                                     override: tracking ? .tracking : nil) {
-                let velocity = fling.flatMap { fling -> Double? in
-                    guard fling.monitor == p.monitor else { return nil }
-                    let distance = to.minX - from.frame.minX
-                    // A clipped destination at an edge must not carry the release speed past that edge and back.
-                    let limit = abs(distance) * springs.position.stiffness.squareRoot() / springs.slowdown
-                    return distance * fling.velocity > 0 ? copysign(min(abs(fling.velocity), limit), fling.velocity) : 0
+        motion.batch {
+            for (id, p) in placements {
+                guard let win = wins[id], !win.fullScreen, !nativeMoving.contains(id), grab?.window != id || grab?.resize == true else { continue }
+                // A window changing workspace rides the workspace slide's picture, which hides as soon as the slide lands;
+                // flying it across the strip underneath would show it still on its way.
+                let changedWorkspace = wereHomes[id].map { $0 != homes[id] } ?? false
+                var from = motion.current(id, at: now)
+                if let start = mode.start(id, at: now) { from?.frame = start }
+                if animate, !changedWorkspace, let to = p.strip, let from, from.monitor == p.monitor,
+                   let springs = springs(from: from.frame, to: to, monitor: p.monitor, views: views,
+                                         override: tracking ? .tracking : nil) {
+                    let velocity = fling.flatMap { fling -> Double? in
+                        guard fling.monitor == p.monitor else { return nil }
+                        let distance = to.minX - from.frame.minX
+                        // A clipped destination at an edge must not carry the release speed past that edge and back.
+                        let limit = abs(distance) * springs.position.stiffness.squareRoot() / springs.slowdown
+                        return distance * fling.velocity > 0 ? copysign(min(abs(fling.velocity), limit), fling.velocity) : 0
+                    }
+                    if motion.move(id, from: from.frame, to: to, monitor: p.monitor, at: now,
+                                   velocity: velocity, springs: springs) {
+                        mode.flying(id, from: from.frame, to: to)
+                        continue
+                    }
                 }
-                if motion.move(id, from: from.frame, to: to, monitor: p.monitor, at: now,
-                               velocity: velocity, springs: springs) {
-                    mode.flying(id, from: from.frame, to: to)
-                    continue
-                }
+                motion.stop(id, at: p.strip.map { ($0, p.monitor) })
+                send(id, mode.rest(id, p))
             }
-            motion.stop(id, at: p.strip.map { ($0, p.monitor) })
-            send(id, mode.rest(id, p))
+            motion.forget { placements[$0] == nil }
         }
-        motion.forget { placements[$0] == nil }
         watchWindowOrder()
         placeFloating()
         if motion.isMoving {
-            // As the frame the display shows next: the spring's start has nothing to move yet, and waiting for the
-            // display link to come round costs the keypress a frame before anything moves.
-            tick(at: now + 1 / Double(NSScreen.main?.maximumFramesPerSecond ?? 60))
+            // Prime the next real display frame. Input bursts must not advance the clock by a frame per event.
+            let nextFrame = CACurrentMediaTime() + 1 / Double(NSScreen.main?.maximumFramesPerSecond ?? 60)
+            tick(at: max(now, nextFrame))
             motion.run { [weak self] t in self?.tick(at: t) }
         }
         targets = placements
@@ -479,8 +486,8 @@ final class WindowManager {
         return mode.shown(id, at: now)
     }
 
-    /// What the ring and pictures round a window's corners by: a set radius, else the window's own, else macOS's usual.
-    func cornerRadius(_ id: WindowID) -> Double { config.windowCornerRadius ?? snapshots.radii[id] ?? 16 }
+    /// The server's window shape controls occlusion; an app's image can have extra transparent corners inside it.
+    func cornerRadius(_ id: WindowID) -> Double { config.windowCornerRadius ?? wins[id]?.nativeRadius ?? snapshots.radii[id] ?? 16 }
 
     func updateRing(at now: CFTimeInterval) {
         let floatingFocused = focused.flatMap { wins[$0] }?.floating == true
@@ -561,10 +568,11 @@ final class WindowManager {
         nextID += 1
         var rule = config.rule(app: worker.bundleID, title: info.title)
         let win = Win(id: id, element: el, worker: worker, info: info, floating: rule.floats(tileable: info.tileable, popup: info.popup))
+        win.nativeRadius = windowServer.cornerRadius(of: info.windowID)
         wins[id] = win
         ids[el] = id
         worker.watch(el)
-        // The ring follows the window's own corners, measured from a picture of it, so it's taken up front.
+        // Standard previews need a picture; live previews only need one if native corner geometry is unavailable.
         refreshSnapshots([id])
         if win.floating {
             win.floatHome = floatTarget(rule)
@@ -861,7 +869,7 @@ final class WindowManager {
             guard let win = wins[id] else { return ["id": id] }
             var out: [String: Any] = ["id": id, "window_id": win.windowID,
                                       "compositor_origin": direct?.compositor.origin(of: id).map { [$0.x, $0.y] } ?? NSNull(),
-                                      "corner_radius": (config.windowCornerRadius ?? snapshots.radii[id]).map { NSNumber(value: $0) } ?? NSNull(), "app": win.worker.name, "bundle_id": win.worker.bundleID ?? NSNull(),
+                                      "corner_radius": cornerRadius(id), "app": win.worker.name, "bundle_id": win.worker.bundleID ?? NSNull(),
                                       "title": win.title, "floating": win.floating, "focused": focused == id]
             if let p = placements[id] {
                 out["frame"] = [p.frame.minX, p.frame.minY, p.frame.width, p.frame.height]

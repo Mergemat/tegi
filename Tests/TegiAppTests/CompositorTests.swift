@@ -9,6 +9,7 @@ private final class Server: @unchecked Sendable {
     private var shown: [CGWindowID: WindowServer.Presentation] = [:]
     private var commits: [[CGWindowID: WindowServer.Presentation]] = []
     private var associated: [CGWindowID: [CGWindowID]] = [:]
+    private var radii: [CGWindowID: Double] = [99: 16, 98: 16]
     private let committed = DispatchSemaphore(value: 0)
 
     var driver: WindowServer.Driver {
@@ -21,7 +22,8 @@ private final class Server: @unchecked Sendable {
                       if !synchronous { commits.append(frames) }
                   }
                   if !synchronous { committed.signal() }
-              }, associated: { [self] id in lock.withLock { associated[id] ?? [] } })
+              }, associated: { [self] id in lock.withLock { associated[id] ?? [] } },
+              cornerRadius: { [self] id in lock.withLock { radii[id] } })
     }
 
     func nextCommit() -> [CGWindowID: WindowServer.Presentation]? {
@@ -30,6 +32,7 @@ private final class Server: @unchecked Sendable {
     }
     func moveContent(_ id: CGWindowID, to point: CGPoint) { lock.withLock { content[id]?.origin = point } }
     func resizeContent(_ id: CGWindowID, to size: CGSize) { lock.withLock { content[id]?.size = size } }
+    func setRadius(_ id: CGWindowID, _ radius: Double) { lock.withLock { radii[id] = radius } }
     func frame(_ id: CGWindowID) -> CGRect? {
         lock.withLock { shown[id].flatMap { $0.locksBounds ? $0.frame : content[id] } ?? content[id] }
     }
@@ -229,7 +232,8 @@ private final class Server: @unchecked Sendable {
     #expect(manager.direct.clip(2) == .zero)
 }
 
-@MainActor @Test func workspaceSlidesKeepNativeVisibilityUntilTheHandoff() {
+@MainActor @Test(arguments: [false, true])
+func workspaceSlidesPrepareIncomingContentWhileKeepingOutgoingWindowsVisible(reverse: Bool) {
     _ = NSApplication.shared
     let server = Server(), manager = manager(server)
     let screen = CGRect(x: 0, y: 0, width: 1600, height: 1000)
@@ -247,11 +251,17 @@ private final class Server: @unchecked Sendable {
     manager.world.perform(.focusWorkspaceDown, config: manager.config)
     manager.direct.update()
     #expect(manager.windowServer.presentation(of: 99)?.clip == screen)
-    #expect(manager.windowServer.presentation(of: 98)?.clip == .zero)
+    #expect(manager.windowServer.presentation(of: 98)?.clip == screen)
+    if reverse {
+        manager.world.perform(.focusWorkspaceUp, config: manager.config)
+        manager.direct.update()
+        #expect(manager.windowServer.presentation(of: 99)?.clip == screen)
+        #expect(manager.windowServer.presentation(of: 98)?.clip == screen)
+    }
     scene.hide()
     manager.direct.update()
-    #expect(manager.windowServer.presentation(of: 99)?.clip == .zero)
-    #expect(manager.windowServer.presentation(of: 98)?.clip == screen)
+    #expect(manager.windowServer.presentation(of: 99)?.clip == (reverse ? screen : .zero))
+    #expect(manager.windowServer.presentation(of: 98)?.clip == (reverse ? .zero : screen))
 }
 
 @MainActor @Test func startupWorkspaceSwitchesDoNotShowAnUnloadedWallpaper() {
@@ -342,6 +352,23 @@ private final class Server: @unchecked Sendable {
     #expect(manager.windowServer.presentation(of: 99)?.frame == target)
 }
 
+@MainActor @Test func cornerGeometryAnswersUpdateBothTheNativeOutlineAndWorkspacePreview() throws {
+    let server = Server(), manager = manager(server)
+    let screen = CGRect(x: 0, y: 0, width: 1600, height: 1000)
+    manager.world = World(monitors: [Monitor(id: 1, screen: screen, area: screen)])
+    manager.world.insert(1, config: manager.config)
+    manager.wins[1]?.nativeRadius = 16
+    server.setRadius(99, 28)
+    manager.contentAnswered(1)
+    #expect(manager.cornerRadius(1) == 28)
+    #expect(try #require(manager.sceneContent(0).first?.first).radius == 28)
+    manager.config.windowCornerRadius = 12
+    #expect(manager.cornerRadius(1) == 12)
+    #expect(try #require(manager.sceneContent(0).first?.first).radius == 12)
+    manager.ring.update([], tabs: [], config: manager.config)
+    manager.direct.compositor.endAll()
+}
+
 @MainActor @Test func aRefusedHeightReflowsTheStackWhileItIsStillMoving() throws {
     let server = Server(), manager = manager(server)
     let screen = CGRect(x: 0, y: 0, width: 1200, height: 800)
@@ -416,4 +443,72 @@ func aLateSizeAnswerCannotReflowAWindowOutsideTilingControl(state: String) throw
     manager.onChange = {}
     manager.direct.compositor.endAll()
     manager.ring.update([], tabs: [], config: manager.config)
+}
+
+@MainActor @Test func scrollBurstsCannotScheduleTheReleaseBeyondTheNextDisplayFrame() throws {
+    let server = Server(), manager = manager(server)
+    defer {
+        manager.motion.cancel()
+        manager.ring.update([], tabs: [], config: manager.config)
+        manager.direct.compositor.endAll()
+    }
+    let screen = CGRect(x: 0, y: 0, width: 1200, height: 800)
+    manager.world = World(monitors: [Monitor(id: 1, screen: screen, area: screen)])
+    for id in 1...2 { manager.world.insert(id, config: manager.config) }
+    manager.world.perform(.focusColumnFirst, config: manager.config)
+    manager.relayout(direct: true)
+    var released: Flight?
+    let publish = manager.motion.onFlights
+    manager.motion.onFlights = { flights in released = flights[1]; publish(flights) }
+    manager.scrolled(.began)
+    for step in 1...40 {
+        manager.scrolled(.changed(dx: -5, dy: 0, time: 1 + Double(step) / 240))
+    }
+    manager.scrolled(.ended(time: 1.18))
+    let nextFrame = CACurrentMediaTime() + 1 / Double(NSScreen.main?.maximumFramesPerSecond ?? 60)
+    let start = try #require(released?.x.start)
+    #expect(start <= nextFrame)
+    #expect(manager.motion.clock <= nextFrame)
+}
+
+@MainActor @Test(arguments: [false, true], [40, 2400])
+func queuedScrollSamplesPublishOnlyTheLatestWholeStrip(released: Bool, samples: Int) async throws {
+    let server = Server(), manager = manager(server)
+    defer {
+        manager.swipe = nil
+        manager.motion.cancel()
+        manager.ring.update([], tabs: [], config: manager.config)
+        manager.direct.compositor.endAll()
+    }
+    manager.config.defaultColumnWidth = 0.8
+    let screen = CGRect(x: 0, y: 0, width: 1200, height: 800)
+    manager.world = World(monitors: [Monitor(id: 1, screen: screen, area: screen)])
+    for id in 1...2 { manager.world.insert(id, config: manager.config) }
+    manager.world.perform(.focusColumnFirst, config: manager.config)
+    manager.relayout(direct: true)
+    manager.scrolled(.began)
+    var plans: [[WindowID: Flight]] = []
+    let publish = manager.motion.onFlights
+    manager.motion.onFlights = { flights in plans.append(flights); publish(flights) }
+    for step in 1...samples {
+        let dx = (step - 1) % 80 < 40 ? -5.0 : 5.0
+        manager.scrolled(.changed(dx: dx, dy: 0, time: 1 + Double(step) / 240))
+    }
+    let tracker = try #require(manager.swipe?.tracker)
+    #expect(tracker.position == (samples == 40 ? 200 : 0))
+    #expect(abs(abs(tracker.velocity) - 1200) < 0.001)
+    if released { manager.scrolled(.ended(time: 1 + Double(samples) / 240 + 0.015)) }
+    let expected = manager.world.layout(config: manager.config)
+    await withCheckedContinuation { continuation in
+        DispatchQueue.main.async { continuation.resume() }
+    }
+    #expect(!plans.isEmpty)
+    let wholeLatestStrip = plans.allSatisfy { plan in
+        [1, 2].allSatisfy { plan[$0]?.target == expected[$0]?.strip }
+    }
+    #expect(wholeLatestStrip)
+    if released {
+        #expect(manager.swipe == nil)
+        #expect(plans.allSatisfy { $0.values.allSatisfy { $0.x.params != .tracking } })
+    }
 }
