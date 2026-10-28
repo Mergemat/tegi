@@ -55,6 +55,10 @@ Direct mode (Settings → Direct mode, or `window-server-motion on`) controls wi
 - `Sources/tegi` is the app. `WindowManager/` applies the model to real windows and animates them; `System/` wraps macOS (Accessibility, input, hotkeys, screen capture, the IPC socket); `UI/` is what tegi draws itself (overview and slides, focus ring, switcher, cheat sheet, banners) and the Settings and welcome windows.
 - `tegi msg event-stream` and `tegi msg state` are the quickest way to see what tegi thinks the layout is.
 
+To investigate trackpad recognition, run `tegi msg input-trace start`, reproduce the unwanted gesture and a deliberate three/four-finger swipe, then run `tegi msg input-trace stop`. The reply shows the local JSONL file path. `tegi msg input-trace status` reports recording state, file size and any error; `tegi msg input-trace delete` stops recording and removes the capture. Recording is off by default, appends across starts, and stops at 64 MiB. It records contact data, callback timestamps, native scroll phases, routing decisions and emitted gestures. Clock values retain their source units; the arrival timestamps provide a shared timeline.
+
+Scroll ownership is conservative: a sequence already delivered to an app stays with that app through its end and momentum, even if another contact lands. Deliberate tegi gestures must be recognized before the native sequence starts. Capture traces before tuning that handoff or palm thresholds.
+
 ## Releasing
 
 `./scripts/release.sh 1.2.3` builds the app, zips it and renders the cask into `.build/dist`, without publishing anything. Pushing a `v1.2.3` tag runs the same script in CI, publishes the GitHub release and commits the cask to `Mergemat/homebrew-tap` (it needs the `HOMEBREW_TAP_DEPLOY_KEY` secret).

@@ -21,9 +21,9 @@ final class InputTap {
     }
 
     private let modifier: CGEventFlags
-    /// How many fingers are on the trackpad making tegi's gesture, three or more or 0 for none, and what it was decided
-    /// as once they've moved.
-    private let claimed: () -> (fingers: Int, decided: Int)
+    private let scrollRouting: () -> TouchGestures.ScrollRouting
+    private let trace: InputTrace
+    private let blockTouches: (Bool) -> Void
     private let handler: (Event) -> Void
     private var tap: CFMachPort?
     private var source: CFRunLoopSource?
@@ -31,14 +31,18 @@ final class InputTap {
     private var scrolling = ScrollInput()
     private var grabbing = false
 
-    init?(modifier: Mods, claimed: @escaping () -> (fingers: Int, decided: Int), handler: @escaping (Event) -> Void) {
+    init?(modifier: Mods, trace: InputTrace, scrolling: ScrollInput, scrollRouting: @escaping () -> TouchGestures.ScrollRouting,
+          blockTouches: @escaping (Bool) -> Void, handler: @escaping (Event) -> Void) {
         var flags: CGEventFlags = []
         if modifier.contains(.alt) { flags.insert(.maskAlternate) }
         if modifier.contains(.ctrl) { flags.insert(.maskControl) }
         if modifier.contains(.cmd) { flags.insert(.maskCommand) }
         if modifier.contains(.shift) { flags.insert(.maskShift) }
         self.modifier = flags
-        self.claimed = claimed
+        self.scrollRouting = scrollRouting
+        self.trace = trace
+        self.blockTouches = blockTouches
+        self.scrolling = scrolling
         self.handler = handler
         let types: [CGEventType] = [.scrollWheel, .leftMouseDown, .leftMouseDragged, .leftMouseUp,
                                     .rightMouseDown, .rightMouseDragged, .rightMouseUp]
@@ -60,23 +64,35 @@ final class InputTap {
         started.wait()
     }
 
-    func stop() {
-        guard let tap else { return }
+    @discardableResult
+    func stop() -> ScrollInput {
+        guard let tap else { return ScrollInput() }
         CGEvent.tapEnable(tap: tap, enable: false)
+        var remainder = ScrollInput()
         if let loop, let source {
-            CFRunLoopRemoveSource(loop, source, .commonModes)
-            CFRunLoopStop(loop)
+            let stopped = DispatchSemaphore(value: 0)
+            CFRunLoopPerformBlock(loop, CFRunLoopMode.commonModes.rawValue) {
+                remainder = self.scrolling.forRestart()
+                CFRunLoopRemoveSource(loop, source, .commonModes)
+                CFRunLoopStop(loop)
+                stopped.signal()
+            }
+            CFRunLoopWakeUp(loop)
+            stopped.wait()
         }
         CFMachPortInvalidate(tap)
         self.tap = nil
+        return remainder
     }
 
     private func send(_ e: Event) {
-        DispatchQueue.main.async { self.handler(e) }
+        DispatchQueue.main.async { if self.tap != nil { self.handler(e) } }
     }
 
     private func handle(_ type: CGEventType, _ event: CGEvent) -> Unmanaged<CGEvent>? {
+        let arrival = ProcessInfo.processInfo.systemUptime
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+            trace.record(["kind": "tap_disabled", "type": type.rawValue], arrival: arrival)
             if let tap { CGEvent.tapEnable(tap: tap, enable: true) }
             return Unmanaged.passUnretained(event)
         }
@@ -97,83 +113,113 @@ final class InputTap {
             send(.release(point: event.location))
             return nil
         default:
-            return scrolling.handle(event, held: held, claim: claimed(), send: send)
+            let routing = scrollRouting()
+            let wereTouchesBlocked = scrolling.blocksTouches
+            let recording = trace.isRecording
+            var emitted: [String] = []
+            let result = scrolling.handle(event, held: held, routing: routing) {
+                if recording { emitted.append(String(describing: $0)) }
+                send($0)
+            }
+            if wereTouchesBlocked != scrolling.blocksTouches { blockTouches(scrolling.blocksTouches) }
+            if recording {
+                trace.record([
+                    "kind": "scroll", "time_ns": event.timestamp,
+                    "phase": event.getIntegerValueField(.scrollWheelEventScrollPhase),
+                    "momentum": event.getIntegerValueField(.scrollWheelEventMomentumPhase),
+                    "continuous": event.getIntegerValueField(.scrollWheelEventIsContinuous),
+                    "dx": event.getDoubleValueField(.scrollWheelEventPointDeltaAxis2),
+                    "dy": event.getDoubleValueField(.scrollWheelEventPointDeltaAxis1),
+                    "held": held, "routing": String(describing: routing),
+                    "owner": scrolling.owner?.rawValue ?? "none", "suppressed": result == nil,
+                    "events": emitted,
+                ], arrival: arrival)
+            }
+            return result
         }
     }
 
 }
 
 struct ScrollInput {
-    private var scrolling = false
-    private var coasting = false
-    private var swallowing = false
+    enum Owner: String { case system, strip, suppressed }
+    private struct Stream {
+        var owner: Owner
+        var direct = true
+        var cancelled = false
+    }
+    private var stream: Stream?
+    var owner: Owner? { stream?.owner }
+    var blocksTouches: Bool {
+        guard let stream else { return false }
+        return stream.direct && (stream.owner == .system || stream.cancelled)
+    }
 
-    mutating func handle(_ event: CGEvent, held: Bool, claim: (fingers: Int, decided: Int),
+    func forRestart() -> ScrollInput {
+        var next = self
+        if var current = stream, current.owner != .system {
+            // An interrupted tegi interaction must drain its native remainder without leaking orphan phases to an app.
+            current.owner = .suppressed
+            current.cancelled = true
+            next.stream = current
+        }
+        return next
+    }
+
+    mutating func handle(_ event: CGEvent, held: Bool, routing: TouchGestures.ScrollRouting,
                          send: (InputTap.Event) -> Void) -> Unmanaged<CGEvent>? {
         let phase = event.getIntegerValueField(.scrollWheelEventScrollPhase)
         let momentum = event.getIntegerValueField(.scrollWheelEventMomentumPhase)
         let dx = event.getDoubleValueField(.scrollWheelEventPointDeltaAxis2)
         let dy = event.getDoubleValueField(.scrollWheelEventPointDeltaAxis1)
         let time = Double(event.timestamp) / 1e9
-        if phase == Phase.began, momentum == 0, coasting {
-            coasting = false
-            send(.momentumEnded)
-        }
-        // macOS makes scrolls of three and four fingers too, which aren't for the window under the pointer or the
-        // overview. Three fingers scroll the strip with them, so it moves as anything scrolled on a Mac does; four are
-        // the overview's, and their scroll, coast and all, goes nowhere.
-        if event.getIntegerValueField(.scrollWheelEventIsContinuous) != 0 {
-            // Fingers land one by one, so the scroll may have begun with two, going to the window under the pointer;
-            // a fourth may be on its way, so three only take the strip once they've moved as three.
-            if claim.decided == 3, !scrolling, momentum == 0 {
-                swallowing = false
-                scrolling = true
-                coasting = false
-                send(.began)
-                if phase == Phase.began { return nil }
-            } else if claim.fingers >= 3, !scrolling, !coasting {
-                swallowing = true
-                return nil
-            }
-            if swallowing {
-                guard phase == Phase.began, momentum == 0 else { return nil }
-                swallowing = false
-            }
-        }
-        if phase == Phase.began { coasting = false }
-        if momentum != 0 {
-            guard coasting else { return Unmanaged.passUnretained(event) }
-            if momentum == Phase.momentumEnded {
-                coasting = false
-                send(.momentumEnded)
-            } else {
-                send(.momentum(dx: dx, dy: dy, time: time))
-            }
-            return nil
-        }
-        if event.getIntegerValueField(.scrollWheelEventIsContinuous) == 0 {
+        guard event.getIntegerValueField(.scrollWheelEventIsContinuous) != 0 else {
             guard held else { return Unmanaged.passUnretained(event) }
             send(.wheel(dx: dx, dy: dy))
             return nil
         }
-        switch phase {
-        case Phase.began where held:
-            scrolling = true
-            send(.began)
-            return nil
-        case Phase.changed where scrolling:
-            send(.changed(dx: dx, dy: dy, time: time))
-            return nil
-        case Phase.ended, Phase.cancelled:
-            guard scrolling else { break }
-            scrolling = false
-            coasting = phase != Phase.cancelled
-            send(.ended(time: time))
-            if !coasting { send(.momentumEnded) }
-            return nil
-        default:
-            if scrolling { return nil }
+        let begins = phase & Phase.began != 0
+        let changes = phase & Phase.changed != 0
+        let cancelled = phase & Phase.cancelled != 0
+        let ends = cancelled || phase & Phase.ended != 0
+        if momentum != 0 {
+            guard let stream, !stream.direct else { return Unmanaged.passUnretained(event) }
+            if stream.owner == .strip, !stream.cancelled {
+                if momentum == Phase.momentumEnded { send(.momentumEnded) }
+                else { send(.momentum(dx: dx, dy: dy, time: time)) }
+            }
+            if momentum == Phase.momentumEnded { self.stream = nil }
+            return stream.owner == .system ? Unmanaged.passUnretained(event) : nil
         }
-        return Unmanaged.passUnretained(event)
+        if begins {
+            if stream?.owner == .strip {
+                if stream?.direct == true { send(.ended(time: time)) }
+                send(.momentumEnded)
+            }
+            stream = nil
+        }
+        // Once any direct scroll is delivered to an app, its remaining phases and tail stay with that app.
+        // Pending recognition cannot discard a prefix and later pretend it was passed through.
+        if stream == nil, begins || changes, !ends {
+            let owner: Owner = routing == .suppress ? .suppressed : held || routing == .strip ? .strip : .system
+            stream = Stream(owner: owner)
+            if owner == .strip { send(.began) }
+        }
+        guard var current = stream else { return Unmanaged.passUnretained(event) }
+        if current.direct {
+            if current.owner == .strip {
+                if !ends, (begins || changes), dx != 0 || dy != 0 { send(.changed(dx: dx, dy: dy, time: time)) }
+                if ends {
+                    send(.ended(time: time))
+                    if cancelled { send(.momentumEnded) }
+                }
+            }
+            if ends {
+                current.direct = false
+                current.cancelled = cancelled
+                stream = current
+            }
+        }
+        return current.owner == .system ? Unmanaged.passUnretained(event) : nil
     }
 }

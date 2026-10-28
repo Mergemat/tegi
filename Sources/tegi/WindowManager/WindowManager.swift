@@ -117,6 +117,7 @@ final class WindowManager {
     var input: InputTap?
     var swipe: Swipe?
     var overviewSwipe: OverviewSwipe?
+    let inputTrace = InputTrace()
     var grab: Grab?
     var edgeTimer: Timer?
     var lastWheel: CFTimeInterval = 0
@@ -304,6 +305,7 @@ final class WindowManager {
     func setPaused(_ pause: Bool) {
         guard pause != paused else { return }
         if pause {
+            cancelOverviewSwipe()
             restore()
             paused = true
             ring.update([], tabs: [], config: config)
@@ -313,6 +315,7 @@ final class WindowManager {
             floatHidden = []
             relayout()
         }
+        if input != nil { startInput() }
         onChange()
     }
 

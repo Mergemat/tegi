@@ -183,6 +183,23 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return data.map { String(decoding: $0, as: UTF8.self) } ?? "error: couldn't encode state"
         case "event-stream":
             return compactState() ?? "error: couldn't encode state"
+        case "input-trace":
+            guard words.count == 2 else { return "error: use input-trace start, stop, status or delete" }
+            do {
+                switch words[1] {
+                case "start":
+                    try wm.inputTrace.start()
+                    wm.inputTrace.record(["kind": "configuration", "paused": wm.paused,
+                                          "three_finger_swipe": wm.config.threeFingerSwipe,
+                                          "reader_available": wm.multitouch != nil, "tap_available": wm.input != nil])
+                case "stop": wm.inputTrace.stop()
+                case "delete": try wm.inputTrace.delete()
+                case "status": break
+                default: return "error: use input-trace start, stop, status or delete"
+                }
+                let data = try JSONSerialization.data(withJSONObject: wm.inputTrace.status, options: [.prettyPrinted, .sortedKeys])
+                return String(decoding: data, as: UTF8.self)
+            } catch { return "error: \(error.localizedDescription)" }
         case "window-server-authorized":
             guard words.count == 2, let connection = Int32(words[1]), wm.windowServer.acceptAuthorization(connection: connection) else {
                 return "error: WindowServer connection changed"
@@ -330,6 +347,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func quitFromMenu() { quit() }
 
     private func quit() {
+        wm?.inputTrace.stop()
         if wm?.paused == false { wm?.restore() }
         ipc?.stop()
         exit(0)
@@ -346,6 +364,7 @@ usage: tegi                    run the window manager
        tegi msg action <cmd>   run a command, e.g. tegi msg action focus-column-left
        tegi msg state          print workspaces and windows as JSON
        tegi msg event-stream   print the same as one line on every change
+       tegi msg input-trace <start|stop|status|delete>  capture trackpad and scroll diagnostics
        tegi msg quit           quit, putting hidden windows back on screen
        tegi validate [file]    check a config file
        tegi --version          print the version

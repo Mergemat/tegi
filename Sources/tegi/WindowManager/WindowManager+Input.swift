@@ -38,14 +38,21 @@ struct Grab {
 
 extension WindowManager {
     func startInput() {
+        cancelOverviewSwipe()
         if grab != nil { endGrab() }
         if let s = swipe, s.axis != nil { scrolled(.ended(time: CACurrentMediaTime())) }
         swipe = nil
-        input?.stop()
+        let scrolling = input?.stop() ?? ScrollInput()
         multitouch?.shutdown()
-        multitouch = config.threeFingerSwipe ? Multitouch { [weak self] in self?.touch($0) } : nil
+        inputTrace.record(["kind": "reset", "paused": paused, "three_finger_swipe": config.threeFingerSwipe,
+                           "owner": scrolling.owner?.rawValue ?? "none"])
+        multitouch = config.threeFingerSwipe && !paused ? Multitouch(trace: inputTrace) { [weak self] in self?.touch($0) } : nil
         let touch = multitouch
-        input = InputTap(modifier: config.swipeModifier, claimed: { touch?.claim ?? (0, 0) }) { [weak self] in self?.inputEvent($0) }
+        touch?.blockTouches(scrolling.blocksTouches)
+        input = InputTap(modifier: paused ? [] : config.swipeModifier, trace: inputTrace, scrolling: scrolling,
+                         scrollRouting: { touch?.scrollRouting ?? .system },
+                         blockTouches: { touch?.blockTouches($0) }) { [weak self] in self?.inputEvent($0) }
+        inputTrace.record(["kind": "availability", "reader_available": multitouch != nil, "tap_available": input != nil])
         for m in monitors { NSEvent.removeMonitor(m) }
         monitors = [
             NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
@@ -93,7 +100,15 @@ extension WindowManager {
             followOverviewSwipe(-dy * 600, at: t)
         case .ended:
             endOverviewSwipe()
+        case .cancelled:
+            cancelOverviewSwipe()
         }
+    }
+
+    func cancelOverviewSwipe() {
+        guard let swipe = overviewSwipe else { return }
+        overviewSwipe = nil
+        setOverview(swipe.from >= 0.5)
     }
 
     func beginOverviewSwipe() {
