@@ -43,6 +43,7 @@ final class WindowServer {
         var submit: ([CGWindowID: Presentation], Set<CGWindowID>, Bool) -> Void
         var associated: (CGWindowID) -> [CGWindowID] = { _ in [] }
         var order: (CGWindowID, Int32, CGWindowID) -> Void = { _, _, _ in }
+        var cornerRadius: (CGWindowID) -> Double? = { _ in nil }
 
         static func load() -> Driver? {
             guard let library = dlopen("/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight", RTLD_LAZY) else { return nil }
@@ -59,6 +60,10 @@ final class WindowServer {
             typealias Commit = @convention(c) (CFTypeRef, Int32) -> Void
             typealias Associated = @convention(c) (Int32, UInt32) -> Unmanaged<CFArray>?
             typealias Order = @convention(c) (Int32, UInt32, Int32, UInt32) -> Int32
+            typealias Query = @convention(c) (Int32, CFArray, UInt32) -> Unmanaged<CFTypeRef>?
+            typealias Iterator = @convention(c) (CFTypeRef) -> Unmanaged<CFTypeRef>?
+            typealias Advance = @convention(c) (CFTypeRef) -> Bool
+            typealias Radii = @convention(c) (CFTypeRef) -> Unmanaged<CFArray>?
             guard let connection = symbol("SLSMainConnectionID", as: Connection.self),
                   let bounds = symbol("SLSGetWindowBounds", as: Bounds.self),
                   let create = symbol("SLSTransactionCreate", as: Create.self),
@@ -70,6 +75,10 @@ final class WindowServer {
                   let associated = symbol("SLSCopyAssociatedWindows", as: Associated.self),
                   let order = symbol("SLSOrderWindow", as: Order.self) else { return nil }
             let cid = connection()
+            let query = symbol("SLSWindowQueryWindows", as: Query.self)
+            let iterator = symbol("SLSWindowQueryResultCopyWindows", as: Iterator.self)
+            let advance = symbol("SLSWindowIteratorAdvance", as: Advance.self)
+            let radii = symbol("SLSWindowIteratorGetCornerRadii", as: Radii.self)
             return Driver(bounds: { id in
                 var frame = CGRect.zero
                 return bounds(cid, id, &frame) == 0 ? frame : nil
@@ -96,7 +105,14 @@ final class WindowServer {
                 commit(transaction, synchronous ? 1 : 0)
             }, associated: { id in
                 associated(cid, id)?.takeRetainedValue() as? [CGWindowID] ?? []
-            }, order: { id, mode, relative in _ = order(cid, id, mode, relative) })
+            }, order: { id, mode, relative in _ = order(cid, id, mode, relative) }, cornerRadius: { id in
+                guard id != 0, let query, let iterator, let advance, let radii,
+                      let result = query(cid, [NSNumber(value: id)] as CFArray, 0)?.takeRetainedValue(),
+                      let windows = iterator(result)?.takeRetainedValue(), advance(windows),
+                      let values = radii(windows)?.takeRetainedValue() as? [Double],
+                      let radius = values.first, radius.isFinite, radius >= 0 else { return nil }
+                return radius
+            })
         }
     }
 
@@ -403,6 +419,8 @@ final class WindowServer {
     }
 
     func contentBounds(of id: CGWindowID) -> CGRect? { driver?.bounds(id) }
+
+    func cornerRadius(of id: CGWindowID) -> Double? { driver?.cornerRadius(id) }
 
     func presentation(of id: CGWindowID) -> Presentation? {
         lock.withLock {

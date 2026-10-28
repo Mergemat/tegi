@@ -19,6 +19,7 @@ final class Win {
     var fullScreenHome: (workspace: Int, column: Int)?
     var floatHome: Int?
     var floatFrame: CGRect?
+    var nativeRadius: Double?
 
     init(id: WindowID, element: AXUIElement, worker: AppWorker, info: WindowInfo, floating: Bool) {
         self.id = id
@@ -482,8 +483,8 @@ final class WindowManager {
         return mode.shown(id, at: now)
     }
 
-    /// What the ring and pictures round a window's corners by: a set radius, else the window's own, else macOS's usual.
-    func cornerRadius(_ id: WindowID) -> Double { config.windowCornerRadius ?? snapshots.radii[id] ?? 16 }
+    /// The server's window shape controls occlusion; an app's image can have extra transparent corners inside it.
+    func cornerRadius(_ id: WindowID) -> Double { config.windowCornerRadius ?? wins[id]?.nativeRadius ?? snapshots.radii[id] ?? 16 }
 
     func updateRing(at now: CFTimeInterval) {
         let floatingFocused = focused.flatMap { wins[$0] }?.floating == true
@@ -564,10 +565,11 @@ final class WindowManager {
         nextID += 1
         var rule = config.rule(app: worker.bundleID, title: info.title)
         let win = Win(id: id, element: el, worker: worker, info: info, floating: rule.floats(tileable: info.tileable, popup: info.popup))
+        win.nativeRadius = windowServer.cornerRadius(of: info.windowID)
         wins[id] = win
         ids[el] = id
         worker.watch(el)
-        // The ring follows the window's own corners, measured from a picture of it, so it's taken up front.
+        // Standard previews need a picture; live previews only need one if native corner geometry is unavailable.
         refreshSnapshots([id])
         if win.floating {
             win.floatHome = floatTarget(rule)
@@ -864,7 +866,7 @@ final class WindowManager {
             guard let win = wins[id] else { return ["id": id] }
             var out: [String: Any] = ["id": id, "window_id": win.windowID,
                                       "compositor_origin": direct?.compositor.origin(of: id).map { [$0.x, $0.y] } ?? NSNull(),
-                                      "corner_radius": (config.windowCornerRadius ?? snapshots.radii[id]).map { NSNumber(value: $0) } ?? NSNull(), "app": win.worker.name, "bundle_id": win.worker.bundleID ?? NSNull(),
+                                      "corner_radius": cornerRadius(id), "app": win.worker.name, "bundle_id": win.worker.bundleID ?? NSNull(),
                                       "title": win.title, "floating": win.floating, "focused": focused == id]
             if let p = placements[id] {
                 out["frame"] = [p.frame.minX, p.frame.minY, p.frame.width, p.frame.height]

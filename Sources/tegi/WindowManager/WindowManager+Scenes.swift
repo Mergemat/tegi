@@ -296,12 +296,15 @@ extension WindowManager {
 
     /// `corners`: for the corner radius, which the ring follows, even of a window measured before.
     func refreshSnapshots(_ ids: [WindowID], corners: Bool = false) {
-        // Live pictures need no snapshots, but a window's corner radius is measured from one.
-        let ids = mode.liveScenes && !corners ? ids.filter { snapshots.radii[$0] == nil } : ids
+        // Live windows need a picture only when their native corner geometry is unavailable.
+        let ids = mode.liveScenes ? ids.filter {
+            wins[$0]?.nativeRadius == nil && (corners || snapshots.radii[$0] == nil)
+        } : ids
         let list = ids.compactMap { id in wins[id].map { (id: id, windowID: $0.windowID) } }
         let radii = snapshots.radii
         snapshots.refresh(list, scale: NSScreen.main?.backingScaleFactor ?? 2) { [weak self] id in
             guard let self, let image = snapshots.images[id] else { return }
+            if let win = wins[id], let radius = windowServer.cornerRadius(of: win.windowID) { win.nativeRadius = radius }
             for scene in scenes.values { scene.setContents(image, for: id) }
             updateRing(at: motion.clock)
             // The radius is in the state, so watchers of it hear when it's measured.

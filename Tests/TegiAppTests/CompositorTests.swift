@@ -9,6 +9,7 @@ private final class Server: @unchecked Sendable {
     private var shown: [CGWindowID: WindowServer.Presentation] = [:]
     private var commits: [[CGWindowID: WindowServer.Presentation]] = []
     private var associated: [CGWindowID: [CGWindowID]] = [:]
+    private var radii: [CGWindowID: Double] = [99: 16, 98: 16]
     private let committed = DispatchSemaphore(value: 0)
 
     var driver: WindowServer.Driver {
@@ -21,7 +22,8 @@ private final class Server: @unchecked Sendable {
                       if !synchronous { commits.append(frames) }
                   }
                   if !synchronous { committed.signal() }
-              }, associated: { [self] id in lock.withLock { associated[id] ?? [] } })
+              }, associated: { [self] id in lock.withLock { associated[id] ?? [] } },
+              cornerRadius: { [self] id in lock.withLock { radii[id] } })
     }
 
     func nextCommit() -> [CGWindowID: WindowServer.Presentation]? {
@@ -30,6 +32,7 @@ private final class Server: @unchecked Sendable {
     }
     func moveContent(_ id: CGWindowID, to point: CGPoint) { lock.withLock { content[id]?.origin = point } }
     func resizeContent(_ id: CGWindowID, to size: CGSize) { lock.withLock { content[id]?.size = size } }
+    func setRadius(_ id: CGWindowID, _ radius: Double) { lock.withLock { radii[id] = radius } }
     func frame(_ id: CGWindowID) -> CGRect? {
         lock.withLock { shown[id].flatMap { $0.locksBounds ? $0.frame : content[id] } ?? content[id] }
     }
@@ -347,6 +350,23 @@ func workspaceSlidesPrepareIncomingContentWhileKeepingOutgoingWindowsVisible(rev
     server.resizeContent(99, to: target.size)
     manager.placed(1, generation: 1)
     #expect(manager.windowServer.presentation(of: 99)?.frame == target)
+}
+
+@MainActor @Test func cornerGeometryAnswersUpdateBothTheNativeOutlineAndWorkspacePreview() throws {
+    let server = Server(), manager = manager(server)
+    let screen = CGRect(x: 0, y: 0, width: 1600, height: 1000)
+    manager.world = World(monitors: [Monitor(id: 1, screen: screen, area: screen)])
+    manager.world.insert(1, config: manager.config)
+    manager.wins[1]?.nativeRadius = 16
+    server.setRadius(99, 28)
+    manager.contentAnswered(1)
+    #expect(manager.cornerRadius(1) == 28)
+    #expect(try #require(manager.sceneContent(0).first?.first).radius == 28)
+    manager.config.windowCornerRadius = 12
+    #expect(manager.cornerRadius(1) == 12)
+    #expect(try #require(manager.sceneContent(0).first?.first).radius == 12)
+    manager.ring.update([], tabs: [], config: manager.config)
+    manager.direct.compositor.endAll()
 }
 
 @MainActor @Test func aRefusedHeightReflowsTheStackWhileItIsStillMoving() throws {
