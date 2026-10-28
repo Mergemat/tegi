@@ -229,7 +229,8 @@ private final class Server: @unchecked Sendable {
     #expect(manager.direct.clip(2) == .zero)
 }
 
-@MainActor @Test func workspaceSlidesKeepNativeVisibilityUntilTheHandoff() {
+@MainActor @Test(arguments: [false, true])
+func workspaceSlidesPrepareIncomingContentWhileKeepingOutgoingWindowsVisible(reverse: Bool) {
     _ = NSApplication.shared
     let server = Server(), manager = manager(server)
     let screen = CGRect(x: 0, y: 0, width: 1600, height: 1000)
@@ -247,11 +248,17 @@ private final class Server: @unchecked Sendable {
     manager.world.perform(.focusWorkspaceDown, config: manager.config)
     manager.direct.update()
     #expect(manager.windowServer.presentation(of: 99)?.clip == screen)
-    #expect(manager.windowServer.presentation(of: 98)?.clip == .zero)
+    #expect(manager.windowServer.presentation(of: 98)?.clip == screen)
+    if reverse {
+        manager.world.perform(.focusWorkspaceUp, config: manager.config)
+        manager.direct.update()
+        #expect(manager.windowServer.presentation(of: 99)?.clip == screen)
+        #expect(manager.windowServer.presentation(of: 98)?.clip == screen)
+    }
     scene.hide()
     manager.direct.update()
-    #expect(manager.windowServer.presentation(of: 99)?.clip == .zero)
-    #expect(manager.windowServer.presentation(of: 98)?.clip == screen)
+    #expect(manager.windowServer.presentation(of: 99)?.clip == (reverse ? screen : .zero))
+    #expect(manager.windowServer.presentation(of: 98)?.clip == (reverse ? .zero : screen))
 }
 
 @MainActor @Test func startupWorkspaceSwitchesDoNotShowAnUnloadedWallpaper() {

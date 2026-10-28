@@ -19,7 +19,8 @@ enum LiveWindowLayer {
         layer.name = "live"
         layer.setValue("com.apple.WindowServer.CGSWindow", forKey: "pluginType")
         layer.setValue(NSNumber(value: window), forKey: "pluginId")
-        layer.setValue(4, forKey: "pluginFlags")
+        // Flag 4 strips the native shadow, making an outline underneath it change brightness at handoff.
+        layer.setValue(0, forKey: "pluginFlags")
         layer.setValue("resizeAspect", forKey: "pluginGravity")
         return layer
     }

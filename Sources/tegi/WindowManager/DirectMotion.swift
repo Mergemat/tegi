@@ -186,8 +186,9 @@ final class DirectMotion: MotionMode {
         let monitor = wm.world.locate(id)?.monitor ?? wm.wins[id].flatMap(wm.floatMonitor)
         if let monitor, wm.world.monitors.indices.contains(monitor),
            let scene = wm.scenes[wm.world.monitors[monitor].id], scene.isVisible, !scene.inOverview, !scene.isSettled,
-           let win = wm.wins[id], let clip = server.presentation(of: win.windowID)?.clip {
-            // Changing native visibility under a moving preview can expose a blank frame.
+           let win = wm.wins[id], let clip = server.presentation(of: win.windowID)?.clip, !clip.isEmpty {
+            // Outgoing windows keep drawing until handoff. Incoming ones must become visible underneath the
+            // preview now, so their apps can lay out and render before the slide finishes.
             return clip
         }
         if let win = wm.wins[id], win.floating {

@@ -177,6 +177,8 @@ final class Scene: NSObject {
         place(at: now)
         root.isHidden = false
         CATransaction.commit()
+        // Submit the cover before the compositor reveals incoming native windows underneath it.
+        CATransaction.flush()
     }
 
     func update(_ content: Content, animated: Bool = true) {
@@ -226,22 +228,23 @@ final class Scene: NSObject {
                     move(card, to: flip(win.frame), animated: animated)
                 }
                 card.zPosition = win.depth
+                let surface = surface(of: card)
                 if liveWindows[win.id] != win.liveWindow {
-                    card.sublayers?.filter { $0.name == "live" }.forEach { $0.removeFromSuperlayer() }
+                    surface.sublayers?.filter { $0.name == "live" }.forEach { $0.removeFromSuperlayer() }
                     liveWindows[win.id] = nil
                 }
                 if let window = win.liveWindow, liveWindows[win.id] == nil, let live = LiveWindowLayer.make(window) {
-                    card.contents = nil
-                    card.backgroundColor = nil
-                    card.sublayers?.filter { $0 !== ring && $0.name != "badge" }.forEach { $0.removeFromSuperlayer() }
-                    live.frame = card.bounds
+                    surface.contents = nil
+                    surface.backgroundColor = nil
+                    surface.sublayers?.forEach { $0.removeFromSuperlayer() }
+                    live.frame = surface.bounds
                     live.autoresizingMask = [.layerWidthSizable, .layerHeightSizable]
-                    card.insertSublayer(live, at: 0)
+                    surface.addSublayer(live)
                     liveWindows[win.id] = window
-                } else if win.liveWindow == nil, let image = win.image, card.contents == nil {
+                } else if win.liveWindow == nil, let image = win.image, surface.contents == nil {
                     setContents(image, of: card)
                 }
-                card.cornerRadius = win.radius
+                surface.cornerRadius = win.radius
                 if let color = win.ring { wear(color, card, radius: win.radius) }
             }
         }
@@ -259,7 +262,8 @@ final class Scene: NSObject {
         ring.cornerRadius = radius + config.focusRingWidth
         ring.cornerCurve = .continuous
         ring.frame = card.bounds.insetBy(dx: -config.focusRingWidth, dy: -config.focusRingWidth)
-        card.addSublayer(ring)
+        // Match the native outline's depth: window content covers it through rounded and translucent edges too.
+        card.insertSublayer(ring, at: 0)
     }
 
     func setFrames(_ frames: [WindowID: CGRect]) {
@@ -282,18 +286,28 @@ final class Scene: NSObject {
     }
 
     private func setContents(_ contents: Any, of card: CALayer) {
-        card.contents = contents
-        card.backgroundColor = nil
-        card.sublayers?.filter { $0 !== ring && $0.name != "badge" }.forEach { $0.removeFromSuperlayer() }
+        let surface = surface(of: card)
+        surface.contents = contents
+        surface.backgroundColor = nil
+        surface.sublayers?.forEach { $0.removeFromSuperlayer() }
     }
+
+    private func surface(of card: CALayer) -> CALayer { card.sublayers!.first { $0.name == "surface" }! }
 
     private func makeCard(_ win: Window) -> CALayer {
         let card = CALayer()
-        card.contentsGravity = .resize
-        card.cornerRadius = win.radius
-        card.cornerCurve = .continuous
+        card.bounds = CGRect(origin: .zero, size: win.frame.size)
         card.masksToBounds = false
         card.name = String(win.id)
+        // A separate content layer lets the outline sit below both snapshots and live window mirrors.
+        let surface = CALayer()
+        surface.name = "surface"
+        surface.frame = card.bounds
+        surface.autoresizingMask = [.layerWidthSizable, .layerHeightSizable]
+        surface.contentsGravity = .resize
+        surface.cornerRadius = win.radius
+        surface.cornerCurve = .continuous
+        card.addSublayer(surface)
         if config.overviewIcons, let icon = win.icon {
             // Sized so it shows at 26 points once the overview has zoomed out.
             let side = 26 / config.overviewZoom, inset = 10 / config.overviewZoom
@@ -310,16 +324,16 @@ final class Scene: NSObject {
             card.addSublayer(badge)
         }
         if let image = win.image {
-            card.contents = image
+            surface.contents = image
         } else {
-            card.backgroundColor = CGColor(gray: 0.32, alpha: 1)
+            surface.backgroundColor = CGColor(gray: 0.32, alpha: 1)
             if let icon = win.icon {
                 let l = CALayer()
                 l.contents = icon
                 l.contentsGravity = .resizeAspect
                 l.frame = CGRect(x: 0, y: 0, width: 96, height: 96)
                 l.position = CGPoint(x: win.frame.width / 2, y: win.frame.height / 2)
-                card.addSublayer(l)
+                surface.addSublayer(l)
             }
         }
         return card
