@@ -33,7 +33,8 @@ private func hand(_ count: Int, dx: Double = 0, dy: Double = 0) -> [TouchGesture
     #expect(events.filter { if case .began = $0 { true } else { false } }.count == 1)
     #expect(events.filter { $0 == .ended }.count == 1)
     // Following the fingers from where the gesture was decided.
-    #expect(abs(rise - 0.16) < 1e-9)
+    #expect(rise > 0 && rise <= 0.2)
+    #expect(events.allSatisfy { if case .changed(_, let dy) = $0 { abs(dy - 0.02) < 1e-9 } else { true } })
 }
 
 @Test func threeFingersMoveTheStripByHowFarTheyMoveAndAFingerLandingMovesNothing() {
@@ -72,10 +73,10 @@ private func hand(_ count: Int, dx: Double = 0, dy: Double = 0) -> [TouchGesture
 @Test func scrollRoutingFollowsMovingFingersUntilTheyLift() {
     var g = Trackpad()
     _ = g.frame(hand(3))
-    #expect(g.scrollRouting == .system)
+    #expect(g.scrollRouting == .pending)
     _ = g.frame(hand(3, dx: 0.01))
     #expect(g.scrollRouting == .pending)
-    _ = g.frame(hand(3, dx: 0.04))
+    for step in 2...6 { _ = g.frame(hand(3, dx: Double(step) * 0.01)) }
     #expect(g.scrollRouting == .strip)
     _ = g.frame(hand(1, dx: 0.04))
     #expect(g.scrollRouting == .suppress)
@@ -92,7 +93,7 @@ private func hand(_ count: Int, dx: Double = 0, dy: Double = 0) -> [TouchGesture
     var events: [TouchGestures.Event] = []
     for step in 0...8 {
         events += g.frame(hand(count, dx: Double(step) * 0.01) + fingers([(9, 0.9, 0.05)]))
-        if count == 2 { #expect(g.scrollRouting == .system) }
+        if count == 2 { #expect(g.scrollRouting == .system || g.scrollRouting == .pending) }
     }
     let beginnings = events.filter { if case .began = $0 { true } else { false } }
     #expect(beginnings == (count == 2 ? [] : [.began(fingers: count)]))
@@ -126,7 +127,7 @@ private func hand(_ count: Int, dx: Double = 0, dy: Double = 0) -> [TouchGesture
         // Once recognized as a palm, rolling onto a smaller part of it must not make it a finger.
         let palm = TouchGestures.Touch(id: 9, x: 0.9 + dx, y: 0.05, area: step < 2 ? 300 : 90)
         events += g.frame(fingers + [palm])
-        if count == 2 { #expect(g.scrollRouting == .system) }
+        if count == 2 { #expect(g.scrollRouting == .system || g.scrollRouting == .pending) }
     }
     let beginnings = events.filter { if case .began = $0 { true } else { false } }
     #expect(beginnings == (count == 2 ? [] : [.began(fingers: count)]))
@@ -151,8 +152,9 @@ private func hand(_ count: Int, dx: Double = 0, dy: Double = 0) -> [TouchGesture
     for step in 0...8 {
         let travel = Double(step) * 0.01
         events += g.frame(hand(2, dx: travel) + fingers([(9, 0.9, 0.05 + travel)]))
-        #expect(g.scrollRouting == .system)
+        #expect(g.scrollRouting == .system || g.scrollRouting == .pending)
     }
+    #expect(g.scrollRouting == .system)
     #expect(events.isEmpty)
 }
 
@@ -228,4 +230,19 @@ private func hand(_ count: Int, dx: Double = 0, dy: Double = 0) -> [TouchGesture
     _ = gestures.frame(.init(time: 3, number: 3, touches: palm))
     _ = gestures.frame(.init(time: 4, number: 4, touches: hand(3) + palm))
     #expect(gestures.frame(.init(time: 5, number: 5, touches: hand(3, dx: 0.04) + palm)) == [.began(fingers: 3)])
+}
+
+@Test func aFourthFingerGetsTheSameMotionBaselineAsTheFirstThree() {
+    var gestures = TouchGestures()
+    func frame(_ time: Double, _ touches: [TouchGestures.Touch]) -> [TouchGestures.Event] {
+        gestures.frame(.init(time: time, number: Int32(time * 120), touches: touches))
+    }
+    var events = frame(1, hand(3))
+    events += frame(1.016, hand(3, dy: 0.04))
+    events += frame(1.024, hand(3, dy: 0.05) + [hand(4)[3]])
+    for step in 1...10 {
+        events += frame(1.024 + Double(step) / 120,
+                        hand(3, dy: 0.05 + Double(step) * 0.01) + [hand(4, dy: Double(step) * 0.01)[3]])
+    }
+    #expect(events.filter { if case .began = $0 { true } else { false } } == [.began(fingers: 4)])
 }

@@ -160,12 +160,17 @@ struct TrackpadGestures {
     private var times: [UInt64: Double] = [:]
     private var touching: Set<UInt64> = []
     private var active: UInt64?
+    private var lastGesture: (device: UInt64, routing: TouchGestures.ScrollRouting)?
     private var blocked = false
     private var touchesBlockedByScroll = false
 
     var scrollRouting: TouchGestures.ScrollRouting {
-        guard !blocked, !touchesBlockedByScroll, touching.count == 1, let device = touching.first else { return .system }
-        return devices[device]?.scrollRouting ?? .system
+        guard !blocked, !touchesBlockedByScroll, touching.count <= 1 else { return .system }
+        // The native end can arrive after the final raw frame. Keep its decision until a new contact session.
+        guard let device = touching.first else { return lastGesture?.routing ?? .system }
+        let routing = devices[device]?.scrollRouting ?? .system
+        if routing == .suppress, active == nil, let lastGesture, lastGesture.device == device { return lastGesture.routing }
+        return routing
     }
 
     mutating func frame(_ frame: TouchGestures.Frame, device: UInt64) -> [TouchGestures.Event] {
@@ -186,10 +191,12 @@ struct TrackpadGestures {
             blocked = true
             let events: [TouchGestures.Event] = active == nil ? [] : [.cancelled]
             active = nil
+            lastGesture = nil
             devices = [:]
             return events
         }
         let events = devices[device, default: TouchGestures()].frame(frame)
+        if active == nil, touching.contains(device), devices[device]?.scrollRouting != .suppress { lastGesture = nil }
         if touchesBlockedByScroll {
             _ = devices[device]?.reserveForNativeScroll()
             return []
@@ -200,6 +207,7 @@ struct TrackpadGestures {
         }
         if active == nil, events.contains(where: { if case .began = $0 { true } else { false } }) {
             active = device
+            lastGesture = (device, devices[device]!.scrollRouting)
             return events
         }
         return []
@@ -208,6 +216,7 @@ struct TrackpadGestures {
     mutating func blockTouches(_ active: Bool) -> [TouchGestures.Event] {
         touchesBlockedByScroll = active
         if active {
+            lastGesture = nil
             for device in devices.keys { _ = devices[device]?.reserveForNativeScroll() }
         }
         guard active, self.active != nil else { return [] }

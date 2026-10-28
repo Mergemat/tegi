@@ -71,17 +71,19 @@ private func scroll(phase: Int64 = 0, momentum: Int64 = 0, dx: Double = 0) -> CG
 }
 
 @Test func twoFingerScrollingWithARestingPalmGoesToTheApp() {
-    var gestures = TouchGestures()
-    var input = ScrollInput()
+    var gestures = TouchGestures(), input = ScrollInput()
     var sent = 0
+    var delivered: [Double] = []
     for step in 0...8 {
         let dx = Double(step) * 0.01
         _ = gestures.frame(.init(time: Double(step), number: Int32(step), touches: [.init(id: 1, x: 0.3 + dx, y: 0.5), .init(id: 2, x: 0.4 + dx, y: 0.5),
                             .init(id: 9, x: 0.9, y: 0.05)]))
-        let passed = input.handle(scroll(phase: step == 0 ? 1 : 2, dx: 10), held: false,
-                                  routing: gestures.scrollRouting) { _ in sent += 1 }
-        #expect(passed != nil)
+        let event = scroll(phase: step == 0 ? 1 : 2, dx: 10)
+        let passed = input.handle(event, held: false, routing: gestures.scrollRouting,
+                                  replay: { delivered.append($0.getDoubleValueField(.scrollWheelEventPointDeltaAxis2)) }) { _ in sent += 1 }
+        if passed != nil { delivered.append(10) }
     }
+    #expect(delivered == Array(repeating: 10, count: 9))
     #expect(sent == 0)
 }
 
@@ -115,10 +117,16 @@ private func scroll(phase: Int64 = 0, momentum: Int64 = 0, dx: Double = 0) -> CG
 @Test func undecidedContactsPreserveTheEntireSystemScrollSequence() {
     var input = ScrollInput()
     var sent = 0
+    var delivered: [Double] = []
     for event in [scroll(phase: 1, dx: 2), scroll(phase: 2, dx: 8), scroll(phase: 4),
                   scroll(momentum: 1, dx: 4), scroll(momentum: 3)] {
-        #expect(input.handle(event, held: false, routing: .pending) { _ in sent += 1 } != nil)
+        if input.handle(event, held: false, routing: .pending,
+                        replay: { delivered.append($0.getDoubleValueField(.scrollWheelEventPointDeltaAxis2)) },
+                        send: { _ in sent += 1 }) != nil {
+            delivered.append(event.getDoubleValueField(.scrollWheelEventPointDeltaAxis2))
+        }
     }
+    #expect(delivered == [2, 8, 0, 4, 0])
     #expect(sent == 0)
 }
 
@@ -152,7 +160,7 @@ private func scroll(phase: Int64 = 0, momentum: Int64 = 0, dx: Double = 0) -> CG
     for routing: TouchGestures.ScrollRouting in [.system, .strip, .suppress] {
         var input = ScrollInput()
         _ = input.handle(scroll(phase: 1), held: false, routing: routing) { _ in }
-        input = input.forRestart()
+        input = input.forRestart(replay: { _ in })
         var sent = 0
         for event in [scroll(phase: 2, dx: 10), scroll(phase: 4), scroll(momentum: 1, dx: 3), scroll(momentum: 3)] {
             let result = input.handle(event, held: false, routing: .system) { _ in sent += 1 }
@@ -161,4 +169,62 @@ private func scroll(phase: Int64 = 0, momentum: Int64 = 0, dx: Double = 0) -> CG
         #expect(sent == 0)
         #expect(input.handle(scroll(phase: 1), held: false, routing: .system) { _ in sent += 1 } != nil)
     }
+}
+
+@Test func recognizingThreeFingersDeliversTheBufferedMotionToTheStrip() {
+    var input = ScrollInput()
+    var moved = 0.0, began = 0, replayed = 0
+    func receive(_ event: InputTap.Event) {
+        if case .began = event { began += 1 }
+        if case .changed(let dx, _, _) = event { moved += dx }
+    }
+    #expect(input.handle(scroll(phase: 1, dx: 2), held: false, routing: .pending, send: receive) == nil)
+    #expect(input.handle(scroll(phase: 2, dx: 5), held: false, routing: .pending, send: receive) == nil)
+    #expect(!input.blocksTouches)
+    #expect(input.handle(scroll(phase: 2, dx: 8), held: false, routing: .strip,
+                         replay: { _ in replayed += 1 }, send: receive) == nil)
+    #expect(began == 1)
+    #expect(moved == 15)
+    #expect(replayed == 0)
+}
+
+@Test func recognizingFourFingersSuppressesTheEntireBufferedSequence() {
+    var input = ScrollInput()
+    var sent = 0, replayed = 0
+    for (event, routing): (CGEvent, TouchGestures.ScrollRouting) in [
+        (scroll(phase: 1, dx: 2), .pending), (scroll(phase: 2, dx: 5), .pending),
+        (scroll(phase: 2, dx: 8), .suppress), (scroll(phase: 4), .system),
+        (scroll(momentum: 1, dx: 4), .system), (scroll(momentum: 3), .system)
+    ] {
+        #expect(input.handle(event, held: false, routing: routing,
+                             replay: { _ in replayed += 1 }, send: { _ in sent += 1 }) == nil)
+    }
+    #expect(sent == 0)
+    #expect(replayed == 0)
+}
+
+@Test func restartingAnUndecidedScrollReturnsItsPrefixToTheApp() {
+    var input = ScrollInput()
+    _ = input.handle(scroll(phase: 1, dx: 2), held: false, routing: .pending) { _ in }
+    _ = input.handle(scroll(phase: 2, dx: 8), held: false, routing: .pending) { _ in }
+    var delivered: [Double] = []
+    input = input.forRestart(replay: { delivered.append($0.getDoubleValueField(.scrollWheelEventPointDeltaAxis2)) })
+    #expect(delivered == [2, 8])
+    #expect(input.owner == .system)
+    #expect(input.handle(scroll(phase: 4), held: false, routing: .system) { _ in } != nil)
+}
+
+@Test func undecidedMotionTimesOutToTheAppWithItsPrefixIntact() {
+    var input = ScrollInput()
+    let began = scroll(phase: 1, dx: 2), changed = scroll(phase: 2, dx: 8)
+    began.timestamp = 1_000_000_000
+    changed.timestamp = 1_100_000_000
+    var delivered: [Double] = []
+    #expect(input.handle(began, held: false, routing: .pending) { _ in } == nil)
+    #expect(input.handle(changed, held: false, routing: .pending,
+                         replay: { delivered.append($0.getDoubleValueField(.scrollWheelEventPointDeltaAxis2)) },
+                         send: { _ in Issue.record("Ambiguous motion took the strip") }) != nil)
+    #expect(delivered == [2])
+    #expect(input.owner == .system)
+    #expect(input.blocksTouches)
 }

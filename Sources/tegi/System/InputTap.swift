@@ -48,8 +48,8 @@ final class InputTap {
                                     .rightMouseDown, .rightMouseDragged, .rightMouseUp]
         let mask = types.reduce(CGEventMask(0)) { $0 | 1 << $1.rawValue }
         guard let tap = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap, options: .defaultTap,
-                                          eventsOfInterest: mask, callback: { _, type, event, me in
-                                              Unmanaged<InputTap>.fromOpaque(me!).takeUnretainedValue().handle(type, event)
+                                          eventsOfInterest: mask, callback: { proxy, type, event, me in
+                                              Unmanaged<InputTap>.fromOpaque(me!).takeUnretainedValue().handle(type, event, proxy: proxy)
                                           }, userInfo: Unmanaged.passUnretained(self).toOpaque()) else { return nil }
         self.tap = tap
         let source = CFMachPortCreateRunLoopSource(nil, tap, 0)
@@ -72,7 +72,7 @@ final class InputTap {
         if let loop, let source {
             let stopped = DispatchSemaphore(value: 0)
             CFRunLoopPerformBlock(loop, CFRunLoopMode.commonModes.rawValue) {
-                remainder = self.scrolling.forRestart()
+                remainder = self.scrolling.forRestart(replay: { $0.post(tap: .cgSessionEventTap) })
                 CFRunLoopRemoveSource(loop, source, .commonModes)
                 CFRunLoopStop(loop)
                 stopped.signal()
@@ -89,7 +89,7 @@ final class InputTap {
         DispatchQueue.main.async { if self.tap != nil { self.handler(e) } }
     }
 
-    private func handle(_ type: CGEventType, _ event: CGEvent) -> Unmanaged<CGEvent>? {
+    private func handle(_ type: CGEventType, _ event: CGEvent, proxy: CGEventTapProxy) -> Unmanaged<CGEvent>? {
         let arrival = ProcessInfo.processInfo.systemUptime
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
             trace.record(["kind": "tap_disabled", "type": type.rawValue], arrival: arrival)
@@ -117,7 +117,7 @@ final class InputTap {
             let wereTouchesBlocked = scrolling.blocksTouches
             let recording = trace.isRecording
             var emitted: [String] = []
-            let result = scrolling.handle(event, held: held, routing: routing) {
+            let result = scrolling.handle(event, held: held, routing: routing, replay: { $0.tapPostEvent(proxy) }) {
                 if recording { emitted.append(String(describing: $0)) }
                 send($0)
             }
@@ -142,22 +142,28 @@ final class InputTap {
 }
 
 struct ScrollInput {
-    enum Owner: String { case system, strip, suppressed }
+    enum Owner: String { case pending, system, strip, suppressed }
     private struct Stream {
         var owner: Owner
         var direct = true
         var cancelled = false
     }
     private var stream: Stream?
+    private var pending: [CGEvent] = []
     var owner: Owner? { stream?.owner }
     var blocksTouches: Bool {
         guard let stream else { return false }
         return stream.direct && (stream.owner == .system || stream.cancelled)
     }
 
-    func forRestart() -> ScrollInput {
+    func forRestart(replay: (CGEvent) -> Void) -> ScrollInput {
         var next = self
-        if var current = stream, current.owner != .system {
+        if next.stream?.owner == .pending {
+            pending.forEach(replay)
+            next.pending = []
+            next.stream?.owner = .system
+        }
+        if var current = next.stream, current.owner != .system {
             // An interrupted tegi interaction must drain its native remainder without leaking orphan phases to an app.
             current.owner = .suppressed
             current.cancelled = true
@@ -167,7 +173,7 @@ struct ScrollInput {
     }
 
     mutating func handle(_ event: CGEvent, held: Bool, routing: TouchGestures.ScrollRouting,
-                         send: (InputTap.Event) -> Void) -> Unmanaged<CGEvent>? {
+                         replay: (CGEvent) -> Void = { _ in }, send: (InputTap.Event) -> Void) -> Unmanaged<CGEvent>? {
         let phase = event.getIntegerValueField(.scrollWheelEventScrollPhase)
         let momentum = event.getIntegerValueField(.scrollWheelEventMomentumPhase)
         let dx = event.getDoubleValueField(.scrollWheelEventPointDeltaAxis2)
@@ -192,6 +198,8 @@ struct ScrollInput {
             return stream.owner == .system ? Unmanaged.passUnretained(event) : nil
         }
         if begins {
+            pending.forEach(replay)
+            pending = []
             if stream?.owner == .strip {
                 if stream?.direct == true { send(.ended(time: time)) }
                 send(.momentumEnded)
@@ -201,11 +209,27 @@ struct ScrollInput {
         // Once any direct scroll is delivered to an app, its remaining phases and tail stay with that app.
         // Pending recognition cannot discard a prefix and later pretend it was passed through.
         if stream == nil, begins || changes, !ends {
-            let owner: Owner = routing == .suppress ? .suppressed : held || routing == .strip ? .strip : .system
+            let owner: Owner = routing == .suppress ? .suppressed : held || routing == .strip ? .strip : routing == .pending ? .pending : .system
             stream = Stream(owner: owner)
             if owner == .strip { send(.began) }
         }
         guard var current = stream else { return Unmanaged.passUnretained(event) }
+        if current.owner == .pending {
+            let elapsed = pending.first.map { (Double(event.timestamp) - Double($0.timestamp)) / 1e9 } ?? 0
+            // Keep the prefix until contact recognition chooses an owner; ambiguity has a bounded delay.
+            if routing == .pending, !ends, elapsed < 0.08, let copy = event.copy() {
+                pending.append(copy)
+                return nil
+            }
+            let buffered = pending
+            pending = []
+            stream = nil
+            let resolved: TouchGestures.ScrollRouting = routing == .pending ? .system : routing
+            for prefix in buffered {
+                if handle(prefix, held: held, routing: resolved, replay: replay, send: send) != nil { replay(prefix) }
+            }
+            return handle(event, held: held, routing: resolved, replay: replay, send: send)
+        }
         if current.direct {
             if current.owner == .strip {
                 if !ends, (begins || changes), dx != 0 || dy != 0 { send(.changed(dx: dx, dy: dy, time: time)) }

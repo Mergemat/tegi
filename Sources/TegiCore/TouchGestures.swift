@@ -84,15 +84,18 @@ public struct TouchGestures {
 
     private var phase = Phase.tracking
     private var contacts: [Int32: Contact] = [:]
+    private var lastAddition: Double?
     private var lastTime: Double?
     private var rebase = false
 
     public var scrollRouting: ScrollRouting {
         switch phase {
-        case .tracking: movingFingers.count >= 3 ? .pending : .system
-        case .system: .system
-        case .swiping(let ids): ids.count == 3 ? .strip : .suppress
-        case .finished: .suppress
+        case .tracking:
+            let available = contacts.values.filter { !$0.palm && !$0.reserved }.count
+            return available >= 3 || (available >= 2 && settling) ? .pending : .system
+        case .system: return .system
+        case .swiping(let ids): return ids.count == 3 ? .strip : .suppress
+        case .finished: return .suppress
         }
     }
 
@@ -112,6 +115,14 @@ public struct TouchGestures {
             contact.touch = touch
             return (touch.id, contact)
         }, uniquingKeysWith: { _, new in new })
+        if case .tracking = phase, contacts.keys.contains(where: { previous[$0] == nil }) {
+            lastAddition = frame.time
+            // Fingers land on different frames. Compare their motion from the same instant.
+            for id in contacts.keys {
+                let touch = contacts[id]!.touch
+                contacts[id]?.origin = touch
+            }
+        }
         if contacts.isEmpty {
             defer { phase = .tracking; rebase = false }
             if case .swiping = phase { return [.ended] }
@@ -142,7 +153,7 @@ public struct TouchGestures {
         case .tracking:
             rejectPalms()
             let moving = movingFingers
-            guard !moving.isEmpty else { return [] }
+            guard !moving.isEmpty, !settling else { return [] }
             let dx = moving.reduce(0.0) { $0 + $1.dx } / Double(moving.count)
             let dy = moving.reduce(0.0) { $0 + $1.dy } / Double(moving.count)
             // This is normalized travel, not a calibrated physical distance.
@@ -173,8 +184,11 @@ public struct TouchGestures {
         return []
     }
 
+    private var settling: Bool { (lastTime ?? 0) - (lastAddition ?? -.infinity) < 0.04 }
+
     private mutating func resumeTracking() {
         phase = .tracking
+        lastAddition = lastTime
         contacts = contacts.mapValues { Contact(origin: $0.touch, touch: $0.touch, palm: $0.palm, reserved: $0.reserved) }
     }
 
