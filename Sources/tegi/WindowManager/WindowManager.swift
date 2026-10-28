@@ -190,6 +190,7 @@ final class WindowManager {
                 self?.restack()
             }
         }
+        ring.subLevel = { [windowServer] in windowServer.subLevel(of: $0) }
         recent.onCommit = { [weak self] id in self?.focusWindow(id) }
         ring.onPickTab = { [weak self] id in self?.focusWindow(id) }
         for app in NSWorkspace.shared.runningApplications { add(app, initial: true) }

@@ -20,12 +20,15 @@ final class FocusRing {
     }
 
     var onPickTab: (WindowID) -> Void = { _ in }
+    /// Where a tile sits among the windows of its level.
+    var subLevel: (CGWindowID) -> Int32 = { _ in 0 }
 
     private final class Overlay {
         let window = NSWindow(contentRect: .zero, styleMask: .borderless, backing: .buffered, defer: false)
         let ring = CALayer()
         var last: Drawn?
         var below: CGWindowID = 0
+        var subLevel: Int32 = 0
 
         init() {
             window.isOpaque = false
@@ -86,16 +89,24 @@ final class FocusRing {
     // shadow blinks over the ring until tegi hears and puts the ring back.
     private func show(_ overlay: Overlay, on screen: NSScreen, below window: CGWindowID) {
         if overlay.window.frame != screen.frame { overlay.window.setFrame(screen.frame, display: false) }
-        guard !overlay.window.isVisible || overlay.below != window else { return }
+        guard !overlay.window.isVisible || overlay.below != window || overlay.subLevel != subLevel(window) else { return }
         overlay.below = window
-        if window != 0 { overlay.window.order(.below, relativeTo: Int(window)) } else { overlay.window.orderFrontRegardless() }
+        if window != 0 { overlay.subLevel = order(overlay.window, below: window) } else { overlay.window.orderFrontRegardless() }
     }
 
     /// For after windows were reordered above the ringed ones.
     func restack() {
         for overlay in overlays.values where overlay.window.isVisible && overlay.below != 0 {
-            overlay.window.order(.below, relativeTo: Int(overlay.below))
+            overlay.subLevel = order(overlay.window, below: overlay.below)
         }
+    }
+
+    /// The window server keeps a window within its sub-level, so one ordered under a tile has to join the tile's first.
+    @discardableResult private func order(_ window: NSWindow, below tile: CGWindowID) -> Int32 {
+        let level = subLevel(tile)
+        WindowServer.setSubLevel(of: window, level)
+        window.order(.below, relativeTo: Int(tile))
+        return level
     }
 
     private func local(_ frame: CGRect, in screen: CGRect) -> CGRect {
@@ -140,7 +151,7 @@ final class FocusRing {
         hint = window
         window.setFrame(CGRect(x: rect.minX, y: top - rect.maxY, width: rect.width, height: rect.height), display: false)
         if hintBelow != dragged || !window.isVisible {
-            window.order(.below, relativeTo: Int(dragged))
+            order(window, below: dragged)
             hintBelow = dragged
         }
     }

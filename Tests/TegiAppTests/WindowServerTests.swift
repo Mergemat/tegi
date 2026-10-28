@@ -17,6 +17,23 @@ private final class Server {
     }
 }
 
+@Test func sunkTilesComeBackUpWhenTheyLeaveTheStrip() {
+    var levels: [CGWindowID: Int32] = [1: 0, 2: 0, 3: 0]
+    let driver = WindowServer.Driver(bounds: { _ in nil }, submit: { _, _, _ in }, setSubLevel: { levels[$0] = $1 })
+    let server = WindowServer(driver: driver)
+    server.configure(enabled: true)
+    _ = server.acceptAuthorization(connection: WindowServer.connectionID)
+    let below = CGWindowLevelForKey(.backstopMenu)
+    server.sink([1, 2, 3])
+    #expect(levels == [1: below, 2: below, 3: below])
+    server.sink([2, 3])
+    #expect(levels[1] == 0)
+    server.release([2])
+    #expect(levels[2] == 0)
+    server.configure(enabled: false)
+    #expect(levels == [1: 0, 2: 0, 3: 0])
+}
+
 @Test func aSilentDenialStopsSubmittingUntilTurnedOnAgain() {
     let server = Server()
     server.refuses = true

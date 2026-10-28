@@ -55,6 +55,7 @@ final class DirectMotion: MotionMode {
 
     func update() {
         guard !wm.paused, server.active else { return }
+        server.sink(Set(wm.wins.values.filter { !$0.floating && !$0.fullScreen && !$0.suspended && $0.windowID != 0 }.map(\.windowID)))
         let managed = wm.wins.values.filter {
             $0.windowID != 0 && !$0.fullScreen && !$0.suspended && !wm.nativeMoving.contains($0.id)
         }

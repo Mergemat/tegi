@@ -42,7 +42,7 @@ final class WindowServer {
         var placed: ((CGWindowID) -> CGRect?)? = nil
         var submit: ([CGWindowID: Presentation], Set<CGWindowID>, Bool) -> Void
         var associated: (CGWindowID) -> [CGWindowID] = { _ in [] }
-        var order: (CGWindowID, Int32, CGWindowID) -> Void = { _, _, _ in }
+        var setSubLevel: (CGWindowID, Int32) -> Void = { _, _ in }
         var cornerRadius: (CGWindowID) -> Double? = { _ in nil }
 
         static func load() -> Driver? {
@@ -59,7 +59,7 @@ final class WindowServer {
             typealias Region = @convention(c) (UnsafePointer<CGRect>, UnsafeMutablePointer<CFTypeRef?>) -> Int32
             typealias Commit = @convention(c) (CFTypeRef, Int32) -> Void
             typealias Associated = @convention(c) (Int32, UInt32) -> Unmanaged<CFArray>?
-            typealias Order = @convention(c) (Int32, UInt32, Int32, UInt32) -> Int32
+            typealias SetSubLevel = @convention(c) (Int32, UInt32, Int32) -> Int32
             typealias Query = @convention(c) (Int32, CFArray, UInt32) -> Unmanaged<CFTypeRef>?
             typealias Iterator = @convention(c) (CFTypeRef) -> Unmanaged<CFTypeRef>?
             typealias Advance = @convention(c) (CFTypeRef) -> Bool
@@ -73,7 +73,7 @@ final class WindowServer {
                   let region = symbol("CGSNewRegionWithRect", as: Region.self),
                   let commit = symbol("SLSTransactionCommit", as: Commit.self),
                   let associated = symbol("SLSCopyAssociatedWindows", as: Associated.self),
-                  let order = symbol("SLSOrderWindow", as: Order.self) else { return nil }
+                  let setSubLevel = symbol("SLSSetWindowSubLevel", as: SetSubLevel.self) else { return nil }
             let cid = connection()
             let query = symbol("SLSWindowQueryWindows", as: Query.self)
             let iterator = symbol("SLSWindowQueryResultCopyWindows", as: Iterator.self)
@@ -105,7 +105,7 @@ final class WindowServer {
                 commit(transaction, synchronous ? 1 : 0)
             }, associated: { id in
                 associated(cid, id)?.takeRetainedValue() as? [CGWindowID] ?? []
-            }, order: { id, mode, relative in _ = order(cid, id, mode, relative) }, cornerRadius: { id in
+            }, setSubLevel: { id, level in _ = setSubLevel(cid, id, level) }, cornerRadius: { id in
                 guard id != 0, let query, let iterator, let advance, let radii,
                       let result = query(cid, [NSNumber(value: id)] as CFArray, 0)?.takeRetainedValue(),
                       let windows = iterator(result)?.takeRetainedValue(), advance(windows),
@@ -125,6 +125,7 @@ final class WindowServer {
     private var owned: Set<CGWindowID> = []
     private var excluded: Set<CGWindowID> = []
     private var appOwned: Set<CGWindowID> = []
+    private var sunk: Set<CGWindowID> = []
     var controlledIDs: Set<CGWindowID> { lock.withLock { owned } }
     var controlledWindows: Int { lock.withLock { owned.count } }
     private var enabled = false
@@ -381,10 +382,33 @@ final class WindowServer {
     }()
 
 
-    func raise(_ id: CGWindowID, above other: CGWindowID) {
-        guard active else { return }
-        driver?.order(id, 1, other)
+    /// Like yabai, tiles go below every other window of their level, rather than floating windows above it: then a
+    /// window tegi hasn't heard of yet, such as a tile's new dialog, still opens over them. Activating a tile's app
+    /// can't raise it past them either.
+    func sink(_ windows: Set<CGWindowID>) {
+        guard active, let driver else { return }
+        lock.withLock {
+            for id in sunk.subtracting(windows) { driver.setSubLevel(id, Self.normal) }
+            for id in windows.subtracting(sunk) { driver.setSubLevel(id, Self.below) }
+            sunk = windows
+        }
     }
+
+    private static let normal = CGWindowLevelForKey(.normalWindow)
+    private static let below = CGWindowLevelForKey(.backstopMenu)
+
+    func subLevel(of id: CGWindowID) -> Int32 { lock.withLock { sunk.contains(id) ? Self.below : Self.normal } }
+
+    /// tegi's own windows need no grant.
+    static func setSubLevel(of window: NSWindow, _ level: Int32) {
+        _ = setOwnSubLevel?(connectionID, UInt32(window.windowNumber), level)
+    }
+
+    private static let setOwnSubLevel: (@convention(c) (Int32, UInt32, Int32) -> Int32)? = {
+        guard let library = dlopen("/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight", RTLD_LAZY),
+              let symbol = dlsym(library, "SLSSetWindowSubLevel") else { return nil }
+        return unsafeBitCast(symbol, to: (@convention(c) (Int32, UInt32, Int32) -> Int32).self)
+    }()
 
     private static func onDisplay(_ frame: CGRect) -> Bool {
         var count: UInt32 = 0
@@ -443,6 +467,8 @@ final class WindowServer {
     func release(_ windows: Set<CGWindowID>) {
         guard let driver else { return }
         lock.withLock {
+            for id in sunk.intersection(windows) { driver.setSubLevel(id, Self.normal) }
+            sunk.subtract(windows)
             excluded.formUnion(windows)
             for id in windows { presentations[id] = nil; families[id] = nil }
             for id in families.keys { families[id]?.subtract(windows) }
@@ -457,6 +483,8 @@ final class WindowServer {
     func releaseAll() {
         guard let driver else { return }
         lock.withLock {
+            for id in sunk { driver.setSubLevel(id, Self.normal) }
+            sunk = []
             if !owned.isEmpty { driver.submit([:], owned, true) }
             excluded.formUnion(owned)
             presentations = [:]
