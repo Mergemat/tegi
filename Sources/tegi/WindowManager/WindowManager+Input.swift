@@ -162,7 +162,7 @@ extension WindowManager {
             }
             world.scrollView(monitor: m, to: origin, config: config)
             swipe = Swipe(monitor: m, origin: origin)
-            relayout(responsive: true)
+            relayout(tracking: true)
         case .changed(var dx, var dy, let time):
             guard var s = swipe else { return }
             if s.axis == nil {
@@ -176,7 +176,7 @@ extension WindowManager {
             case .horizontal:
                 s.tracker.push(-dx, at: time)
                 world.scrollView(monitor: s.monitor, to: s.origin + s.tracker.position, config: config)
-                relayout(responsive: true)
+                relayout(tracking: true)
             case .vertical:
                 s.tracker.push(-dy, at: time)
                 followSwipe(&s)
@@ -215,12 +215,8 @@ extension WindowManager {
         swipe = nil
         let before = world.focusedWindow
         let pos = world.viewPosition(monitor: s.monitor, config: config)
-        let coast = s.tracker.projectedEnd - s.tracker.position
-        world.endSwipe(monitor: s.monitor, coastingTo: pos + coast, config: config)
-        let correction = world.viewPosition(monitor: s.monitor, config: config) - pos - coast
-        // When the anchor supplies more travel than momentum does, settle as promptly as the finger-following motion.
-        let snapping = abs(correction) >= abs(coast)
-        relayout(responsive: snapping, fling: (-s.tracker.velocity, s.monitor))
+        world.endSwipe(monitor: s.monitor, coastingTo: pos + s.tracker.projectedEnd - s.tracker.position, config: config)
+        relayout(fling: (-s.tracker.velocity, s.monitor))
         if world.focusedWindow != before && !overview { focusModel(layout: false) }
     }
 
