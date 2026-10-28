@@ -57,7 +57,7 @@ Direct mode (Settings → Direct mode, or `window-server-motion on`) controls wi
 
 To investigate trackpad recognition, run `tegi msg input-trace start`, reproduce the unwanted gesture and a deliberate three/four-finger swipe, then run `tegi msg input-trace stop`. The reply shows the local JSONL file path. `tegi msg input-trace status` reports recording state, file size and any error; `tegi msg input-trace delete` stops recording and removes the capture. Recording is off by default, appends across starts, and stops at 64 MiB. It records contact data, callback timestamps, native scroll phases, routing decisions and emitted gestures. Clock values retain their source units; the arrival timestamps provide a shared timeline.
 
-Scroll ownership is conservative: a sequence already delivered to an app stays with that app through its end and momentum, even if another contact lands. Deliberate tegi gestures must be recognized before the native sequence starts. Capture traces before tuning that handoff or palm thresholds.
+Scroll ownership is conservative: a sequence already delivered to an app stays with that app through its end and momentum, even if another contact lands. While contacts are undecided, the native prefix is buffered for up to 80 ms of scroll-event time. Recognition routes that prefix to tegi; rejection or timeout replays it to the app. Capture traces before tuning that handoff or palm thresholds.
 
 ## Releasing
 
