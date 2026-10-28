@@ -353,7 +353,7 @@ final class WindowManager {
 
     func layout() -> [WindowID: Placement] { mode.layout(world.layout(config: config)) }
 
-    func relayout(measuringFrom start: CFAbsoluteTime? = nil, direct: Bool = false, tracking: Bool = false,
+    func relayout(measuringFrom start: CFAbsoluteTime? = nil, direct: Bool = false, responsive: Bool = false,
                   fling: (velocity: Double, monitor: Int)? = nil) {
         guard !paused else { return }
         if let start { pressed = start }
@@ -381,7 +381,7 @@ final class WindowManager {
             if let start = mode.start(id, at: now) { from?.frame = start }
             if animate, !changedWorkspace, let to = p.strip, let from, from.monitor == p.monitor,
                let springs = springs(from: from.frame, to: to, monitor: p.monitor, views: views,
-                                     override: tracking ? .tracking : nil) {
+                                     override: responsive ? .tracking : nil) {
                 let velocity = fling.flatMap { fling -> Double? in
                     guard fling.monitor == p.monitor else { return nil }
                     let distance = to.minX - from.frame.minX

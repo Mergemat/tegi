@@ -444,3 +444,40 @@ func aLateSizeAnswerCannotReflowAWindowOutsideTilingControl(state: String) throw
     manager.direct.compositor.endAll()
     manager.ring.update([], tabs: [], config: manager.config)
 }
+
+@MainActor @Test(arguments: [0.0, 10.0, 180.0])
+func stripReleasesSnapPromptlyWithoutShorteningAFling(step: Double) throws {
+    let server = Server(), manager = manager(server)
+    defer {
+        manager.motion.cancel()
+        manager.ring.update([], tabs: [], config: manager.config)
+        manager.direct.compositor.endAll()
+    }
+    manager.config.defaultColumnWidth = 0.8
+    let screen = CGRect(x: 0, y: 0, width: 1200, height: 800)
+    manager.world = World(monitors: [Monitor(id: 1, screen: screen, area: screen)])
+    for id in 1...2 { manager.world.insert(id, config: manager.config) }
+    manager.world.perform(.focusColumnFirst, config: manager.config)
+    for (id, placement) in manager.world.layout(config: manager.config) {
+        let window = try #require(manager.wins[id]?.windowID)
+        server.moveContent(window, to: placement.frame.origin)
+        server.resizeContent(window, to: placement.frame.size)
+    }
+    manager.relayout(direct: true)
+    manager.scrolled(.began)
+    manager.scrolled(.changed(dx: -300, dy: 0, time: 1))
+    manager.scrolled(.changed(dx: -step, dy: 0, time: 1.95))
+    manager.scrolled(.changed(dx: -step, dy: 0, time: 2))
+    manager.scrolled(.ended(time: 2.01))
+    let target = try #require(manager.targets[1]?.strip)
+    let frame = try #require(manager.motion.frames(at: manager.motion.clock + 0.15).first { $0.id == 1 })
+    #expect(manager.swipe == nil)
+    if step < 180 {
+        #expect(frame.last)
+        #expect(abs(frame.frame.minX - target.minX) < 1)
+    } else {
+        #expect(!frame.last)
+        let right = try #require(manager.world.layout(config: manager.config)[2]?.frame.maxX)
+        #expect(abs(right - (screen.maxX - manager.config.gap)) < 0.001)
+    }
+}
