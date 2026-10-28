@@ -150,9 +150,6 @@ final class WindowManager {
             center.addObserver(forName: NSWorkspace.didLaunchApplicationNotification, object: nil, queue: .main) { [weak self] n in
                 if let app = n.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication { self?.add(app, initial: false) }
             },
-            center.addObserver(forName: NSWorkspace.didTerminateApplicationNotification, object: nil, queue: .main) { [weak self] n in
-                if let app = n.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication { self?.remove(app.processIdentifier) }
-            },
             // Entering or leaving full screen switches Spaces: whatever a resize didn't tell is caught here.
             center.addObserver(forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main) { [weak self] _ in
                 guard let self else { return }
@@ -545,6 +542,7 @@ final class WindowManager {
         guard app.activationPolicy == .regular, pid != getpid(), workers[pid] == nil else { return }
         let worker = AppWorker(app) { [weak self] worker, el, event in self?.handle(worker, el, event) }
         workers[pid] = worker
+        worker.onExit { [weak self] in self?.remove(pid) }
         worker.start { [weak self] found in
             guard let self else { return }
             for (el, info) in found.sorted(by: { ($0.1.frame?.minX ?? 0) < ($1.1.frame?.minX ?? 0) }) {

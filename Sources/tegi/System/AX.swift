@@ -130,6 +130,7 @@ final class AppWorker {
     let icon: NSImage?
     private let queue: DispatchQueue
     private var observer: AXObserver?
+    private var exit: DispatchSourceProcess?
     private let onEvent: (AppWorker, AXUIElement, Event) -> Void
 
     private let lock = NSLock()
@@ -161,6 +162,7 @@ final class AppWorker {
     }
 
     deinit {
+        exit?.cancel()
         if let observer {
             CFRunLoopRemoveSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(observer), .defaultMode)
         }
@@ -203,6 +205,15 @@ final class AppWorker {
             let found = app.windows.compactMap { el in el.info().map { (el, $0) } }
             DispatchQueue.main.async { windows(found) }
         }
+    }
+
+    /// On the main thread. macOS announces only regular apps quitting, and a menu bar app can quit right after its
+    /// window turns it into one.
+    func onExit(_ handler: @escaping () -> Void) {
+        let source = DispatchSource.makeProcessSource(identifier: pid, eventMask: .exit, queue: .main)
+        source.setEventHandler(handler: handler)
+        source.resume()
+        exit = source
     }
 
     private var refcon: UnsafeMutableRawPointer { Unmanaged.passUnretained(self).toOpaque() }
