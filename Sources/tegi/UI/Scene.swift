@@ -53,6 +53,8 @@ final class Scene: NSObject {
 
     var isSettled: Bool { link == nil && !tracking && !inOverview }
     var isAnimating: Bool { link != nil }
+    /// Points from one workspace to the next as shown now.
+    var pitch: Double { size.height * (1 + config.overviewGap) * zoom.value(at: CACurrentMediaTime()) }
 
     var onFinished: () -> Void = {}
     var onSettled: () -> Void = {}

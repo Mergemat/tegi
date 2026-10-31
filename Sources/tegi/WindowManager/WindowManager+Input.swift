@@ -10,6 +10,9 @@ struct Swipe {
     var axis: Axis?
     var pending = CGVector.zero
     var startIndex: Int?
+    /// Travel per workspace. Once workspaces show it's their spacing, so they follow the fingers as the strip does;
+    /// with nothing shown a short swipe switches.
+    var pitch = 300.0
 }
 
 /// Four fingers opening or closing the overview as they go, as Mission Control does.
@@ -244,6 +247,7 @@ extension WindowManager {
             guard config.animations.spring(.workspaceSwitch) != nil, snapshots.allowed || mode.liveScenes,
                   let scene = scene(for: m), overview || scene.hasWallpaper else { return }
             s.startIndex = world.monitors[m].active
+            s.pitch = scene.pitch
             if !scene.isVisible {
                 let content = sceneContent(m, current: mode.liveScenes)
                 scene.show(content, at: Double(world.monitors[m].active))
@@ -253,22 +257,22 @@ extension WindowManager {
         }
         guard let start = s.startIndex else { return }
         let (lo, hi) = swipeRange(start, m)
-        scenes[world.monitors[m].id]?.track(RubberBand.workspaces.clamp(Double(start) + s.tracker.position / 300, lo, hi))
+        scenes[world.monitors[m].id]?.track(RubberBand.workspaces.clamp(Double(start) + s.tracker.position / s.pitch, lo, hi))
     }
 
     func endVerticalSwipe(_ s: Swipe) {
         let m = s.monitor
         guard world.monitors.indices.contains(m) else { return }
         guard let start = s.startIndex else {
-            let steps = (s.tracker.projectedEnd / 300).rounded()
+            let steps = (s.tracker.projectedEnd / s.pitch).rounded()
             guard steps != 0 else { return }
             world.focusedMonitor = m
             return run(steps > 0 ? .focusWorkspaceDown : .focusWorkspaceUp)
         }
         let (lo, hi) = swipeRange(start, m)
-        let position = Double(start) + s.tracker.position / 300
-        let velocity = s.tracker.velocity / 300 * RubberBand.workspaces.clampDerivative(position, lo, hi)
-        let target = Int(min(max(Double(start) + s.tracker.projectedEnd / 300, lo), hi).rounded())
+        let position = Double(start) + s.tracker.position / s.pitch
+        let velocity = s.tracker.velocity / s.pitch * RubberBand.workspaces.clampDerivative(position, lo, hi)
+        let target = Int(min(max(Double(start) + s.tracker.projectedEnd / s.pitch, lo), hi).rounded())
         if target == world.monitors[m].active {
             scenes[world.monitors[m].id]?.slide(to: target, velocity: velocity)
             return
