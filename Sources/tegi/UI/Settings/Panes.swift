@@ -672,7 +672,7 @@ struct GesturesPane: View {
     @EnvironmentObject var model: SettingsModel
 
     private static let modifiers: [(String, String)] = [
-        ("⌥ Option", "alt"), ("⌃ Control", "ctrl"), ("⌘ Command", "cmd"), ("⌥⇧", "alt+shift"), ("⌃⌥", "ctrl+alt"), ("None", "off"),
+        ("Your key", "mod"), ("⌥ Option", "alt"), ("⌃ Control", "ctrl"), ("⌘ Command", "cmd"), ("⌥⇧", "alt+shift"), ("⌃⌥", "ctrl+alt"), ("None", "off"),
     ]
 
     var body: some View {
@@ -717,7 +717,7 @@ struct GesturesPane: View {
         Card {
             Row(title: "Hold to swipe and drag", detail: "Then two fingers or the wheel scroll the strip, dragging moves a window and right-dragging resizes it.",
                 stacked: true, last: true) {
-                Choice(options: Self.modifiers, selected: modifierName(c.swipeModifier)) { model.set(["swipe-modifier"], [$0]) }
+                Choice(options: Self.modifiers, selected: c.swipeKeys.map(modifierName) ?? "mod") { model.set(["swipe-modifier"], [$0]) }
             }
         }
 

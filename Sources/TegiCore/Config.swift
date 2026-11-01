@@ -155,7 +155,9 @@ public struct Config: Equatable {
     public var alwaysCenterSingleColumn = false
     public var workspaceAutoBackAndForth = false
     public var animations = Animations()
-    public var swipeModifier: Mods = .alt
+    /// nil holds your key, so moving off Option frees Option+drag for apps too.
+    public var swipeKeys: Mods?
+    public var swipeModifier: Mods { swipeKeys ?? mod }
     public var overviewZoom = 0.5
     public var hotCorner: Corner? = .topLeft
     /// Between workspaces in the overview, as a share of a workspace's height.
@@ -377,11 +379,12 @@ public struct Config: Equatable {
                 guard modifiers(try one()) != nil else { throw fail("mod is alt, ctrl+alt, cmd+alt, hyper, meh, or another combination") }
             case "swipe-modifier":
                 let v = try one()
-                if v == "off" {
-                    config.swipeModifier = []
-                } else {
-                    guard let mods = modifiers(v) else { throw fail("swipe-modifier is alt, ctrl, cmd, shift, a combination like alt+shift, or off") }
-                    config.swipeModifier = mods
+                switch v {
+                case "mod": config.swipeKeys = nil
+                case "off": config.swipeKeys = []
+                default:
+                    guard let mods = modifiers(v) else { throw fail("swipe-modifier is mod, alt, ctrl, cmd, shift, a combination like alt+shift, or off") }
+                    config.swipeKeys = mods
                 }
             case "three-finger-swipe":
                 switch try one() {
@@ -653,7 +656,8 @@ public struct Config: Equatable {
 
     # Holding this does the same with two fingers or a mouse wheel, and lets
     # you drag windows: left button to move one, right button to resize.
-    swipe-modifier alt
+    # mod is your key, below.
+    swipe-modifier mod
 
     # FOCUS
 
@@ -797,7 +801,7 @@ public struct Config: Equatable {
     # center-focused-column on-overflow
     # focus-ring-color #7fc8ff
     # animation-slowdown 1
-    # swipe-modifier alt
+    # swipe-modifier mod
 
     # bind alt+o toggle-overview
     # unbind alt+q
