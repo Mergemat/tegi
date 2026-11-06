@@ -46,7 +46,7 @@ public struct World: Equatable {
     public var monitors: [Monitor]
     public var focusedMonitor = 0
     public var emptyWorkspaceAboveFirst = false
-    public var pinned: Set<Int> = []
+    var floatMemory: [WindowID: Floater] = [:]
     private var heightLimits: [WindowID: CGSize] = [:]
     private var nextWorkspaceID = 1
 
@@ -58,7 +58,7 @@ public struct World: Equatable {
     public var focusedWindow: WindowID? {
         guard monitors.indices.contains(focusedMonitor) else { return nil }
         let mon = monitors[focusedMonitor]
-        return mon.workspaces[mon.active].activeWindow
+        return mon.workspaces[mon.active].focusedWindow
     }
 
     public func locate(_ id: WindowID) -> (monitor: Int, workspace: Int, column: Int, tile: Int)? {
@@ -70,7 +70,7 @@ public struct World: Equatable {
         return nil
     }
 
-    private func geometry(_ m: Int, _ config: Config) -> Geometry {
+    func geometry(_ m: Int, _ config: Config) -> Geometry {
         Geometry(area: monitors[m].area, config: config, heightLimits: heightLimits)
     }
 
@@ -85,7 +85,7 @@ public struct World: Equatable {
         return body(&monitors[m].workspaces[a], g)
     }
 
-    private mutating func activateWorkspace(_ m: Int, _ idx: Int) {
+    mutating func activateWorkspace(_ m: Int, _ idx: Int) {
         let idx = max(0, min(monitors[m].workspaces.count - 1, idx))
         guard idx != monitors[m].active else { return }
         monitors[m].previousWorkspace = monitors[m].workspaces[monitors[m].active].id
@@ -93,7 +93,7 @@ public struct World: Equatable {
     }
 
     mutating func normalize(_ m: Int) {
-        func disposable(_ ws: Workspace) -> Bool { ws.isEmpty && ws.name == nil && !pinned.contains(ws.id) }
+        func disposable(_ ws: Workspace) -> Bool { ws.isEmpty && ws.name == nil }
         let last = monitors[m].workspaces.last
         if last == nil || !disposable(last!) {
             monitors[m].workspaces.append(newWorkspace(home: monitors[m].id))
@@ -111,13 +111,21 @@ public struct World: Equatable {
     }
 
     public mutating func insert(_ id: WindowID, monitor m: Int? = nil, rule: WindowRule = WindowRule(), config: Config) {
+        guard let (m, w) = target(monitor: m, rule: rule) else { return }
+        insertColumn(id, m, w, rule: rule, focus: w == monitors[m].active && rule.focused != false, config)
+    }
+
+    /// The workspace a rule sends a window to: its workspace, else its display's, else the given display's.
+    func target(monitor m: Int?, rule: WindowRule) -> (monitor: Int, workspace: Int)? {
+        if let name = rule.workspace, let (m, w) = resolve(.name(name)) { return (m, w) }
         var m = m ?? focusedMonitor
         if let name = rule.display, let d = monitors.firstIndex(where: { $0.name.localizedCaseInsensitiveContains(name) }) { m = d }
-        guard monitors.indices.contains(m) else { return }
-        var w = monitors[m].active
-        if let name = rule.workspace, let (wm, wi) = resolve(.name(name)) { (m, w) = (wm, wi) }
+        guard monitors.indices.contains(m) else { return nil }
+        return (m, monitors[m].active)
+    }
+
+    mutating func insertColumn(_ id: WindowID, _ m: Int, _ w: Int, rule: WindowRule, focus: Bool, _ config: Config) {
         let g = geometry(m, config)
-        let shown = w == monitors[m].active
         var column = Column(id, width: .proportion(rule.width ?? config.defaultColumnWidth), fullWidth: rule.maximized == true)
         column.tabbed = config.defaultColumnDisplayTabbed
         if monitors[m].workspaces[w].name == nil { monitors[m].workspaces[w].home = monitors[m].id }
@@ -128,7 +136,8 @@ public struct World: Equatable {
         case .start: 0
         case .end: ws.columns.count
         }
-        monitors[m].workspaces[w].addColumn(column, at: ws.isEmpty ? 0 : at, activate: ws.isEmpty || shown && rule.focused != false, g)
+        monitors[m].workspaces[w].addColumn(column, at: ws.columns.isEmpty ? 0 : at, activate: ws.columns.isEmpty || focus, g)
+        if focus { monitors[m].workspaces[w].floatingActive = false }
         normalize(m)
     }
 
@@ -169,23 +178,34 @@ public struct World: Equatable {
         let m = m ?? focusedMonitor
         guard monitors.indices.contains(m) else { return }
         withActive(m, config) { ws, g in
-            ws.addColumn(Column(id, width: .proportion(config.defaultColumnWidth)), at: ws.columns.count, activate: ws.isEmpty, g)
+            ws.addColumn(Column(id, width: .proportion(config.defaultColumnWidth)), at: ws.columns.count, activate: ws.columns.isEmpty, g)
         }
         normalize(m)
     }
 
-    public mutating func remove(_ id: WindowID, config: Config) {
+    /// `forever`: the window is gone, not just minimized or changing layer, so where it last floated goes too.
+    public mutating func remove(_ id: WindowID, forever: Bool = false, config: Config) {
         heightLimits[id] = nil
+        if let (m, w, i) = locateFloater(id) {
+            // As a dialog closes, focus goes back to the strip it came from, not to whatever else floats.
+            if monitors[m].workspaces[w].focusedWindow == id { monitors[m].workspaces[w].floatingActive = false }
+            let floater = monitors[m].workspaces[w].floaters.remove(at: i)
+            if !forever { floatMemory[id] = floater }
+            normalize(m)
+        }
+        if forever { floatMemory[id] = nil }
         guard let (m, w, c, t) = locate(id) else { return }
         _ = monitors[m].workspaces[w].removeTile(c, t, geometry(m, config))
         normalize(m)
     }
 
     public mutating func focus(_ id: WindowID, config: Config) {
+        if locateFloater(id) != nil { return raise(id) }
         guard let (m, w, c, t) = locate(id) else { return }
         focusedMonitor = m
         activateWorkspace(m, w)
         withActive(m, config) { ws, g in
+            ws.floatingActive = false
             ws.columns[c].active = t
             ws.activate(c, g)
         }
@@ -274,13 +294,14 @@ public struct World: Equatable {
     }
 
     public mutating func moveToNewWorkspace(_ id: WindowID, monitor m: Int, at index: Int, config: Config) {
-        guard monitors.indices.contains(m), locate(id) != nil else { return }
+        guard monitors.indices.contains(m), locate(id) != nil || locateFloater(id) != nil else { return }
         let at = max(0, min(index, monitors[m].workspaces.count))
         let ws = newWorkspace(home: monitors[m].id)
         monitors[m].workspaces.insert(ws, at: at)
         if at <= monitors[m].active { monitors[m].active += 1 }
         if let previous = monitors[m].previousWorkspace, previous == ws.id { monitors[m].previousWorkspace = nil }
         guard let (tm, tw) = find(workspace: ws.id) else { return }
+        if locateFloater(id) != nil { return moveFloater(id, to: tm, workspace: tw, follow: true) }
         move(id, to: tm, workspace: tw, at: .newColumn(0), config: config)
     }
 
@@ -416,6 +437,10 @@ public struct World: Equatable {
         let m = focusedMonitor
         guard monitors.indices.contains(m) else { return }
         let a = monitors[m].active
+        if monitors[m].workspaces[a].floatingFocused, performFloating(command, config: config) {
+            for i in monitors.indices { normalize(i) }
+            return
+        }
 
         switch command {
         case .focusColumnLeft: withActive(m, config) { ws, g in ws.focusColumn(ws.active - 1, g) }
@@ -562,7 +587,7 @@ public struct World: Equatable {
         for i in monitors.indices { normalize(i) }
     }
 
-    private mutating func focusPreviousWorkspace(_ m: Int) {
+    mutating func focusPreviousWorkspace(_ m: Int) {
         guard let id = monitors[m].previousWorkspace,
               let idx = monitors[m].workspaces.firstIndex(where: { $0.id == id }) else { return }
         activateWorkspace(m, idx)
@@ -602,7 +627,7 @@ public struct World: Equatable {
         focusedMonitor = target
     }
 
-    private mutating func focusMonitor(_ d: Direction) {
+    mutating func focusMonitor(_ d: Direction) {
         if let target = monitor(from: focusedMonitor, d) { focusedMonitor = target }
     }
 
@@ -655,6 +680,11 @@ public struct World: Equatable {
                         }
                     }
                     x += w + g.gap
+                }
+                for f in ws.floaters {
+                    let frame = f.frame(in: mon.area)
+                    out[f.id] = wi == mon.active ? Placement(frame: frame, visible: true, strip: frame, monitor: mi)
+                        : Placement(frame: park(frame.size, area: mon.area, others: others), visible: false, monitor: mi)
                 }
             }
         }

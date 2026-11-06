@@ -69,8 +69,7 @@ private final class Server: @unchecked Sendable {
     let screen = CGRect(x: 0, y: 0, width: 1600, height: 1000)
     manager.world = World(monitors: [Monitor(id: 1, screen: screen, area: screen)])
     manager.world.insert(1, config: manager.config)
-    manager.world.pinned = [manager.activeWorkspaceID(on: 0)!]
-    manager.wins[2]?.floatHome = manager.activeWorkspaceID(on: 0)
+    manager.world.addFloating(2, frame: CGRect(x: 0, y: 0, width: 500, height: 500), config: manager.config)
     manager.direct.update()
     server.moveContent(98, to: CGPoint(x: 600, y: 300))
     server.resizeContent(98, to: CGSize(width: 250, height: 200))
@@ -225,10 +224,8 @@ private final class Server: @unchecked Sendable {
     manager.direct.update()
     #expect(manager.windowServer.presentation(of: 99)?.clip == screen)
     #expect(manager.windowServer.presentation(of: 98)?.clip == .zero)
-    let inactive = manager.world.locate(2)!
     manager.wins[2]?.floating = true
-    manager.wins[2]?.floatHome = manager.world.monitors[inactive.monitor].workspaces[inactive.workspace].id
-    manager.floatHidden = []
+    manager.world.float(2, config: manager.config)
     #expect(manager.direct.clip(2) == .zero)
 }
 

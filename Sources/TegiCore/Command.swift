@@ -39,6 +39,8 @@ public enum Command: Equatable {
     case toggleColumnTabbedDisplay, setColumnDisplay(tabbed: Bool)
     case centerColumn, centerWindow, centerVisibleColumns
     case toggleWindowFloating, moveWindowToFloating, moveWindowToTiling
+    /// To a place in the working area, or by an amount: either axis left out stays.
+    case moveFloatingWindow(x: SizeChange?, y: SizeChange?)
     case focusFloating, focusTiling, switchFocusBetweenFloatingAndTiling
     case focusWindowPrevious, nextWindow(sameApp: Bool), previousWindow(sameApp: Bool)
     case closeWindow, showHotkeyOverlay, showSettings(String?)
@@ -120,6 +122,21 @@ public enum Command: Equatable {
             return
         case "spawn-sh" where !rest.isEmpty:
             self = .spawnSh(rest.joined(separator: " "))
+            return
+        case "move-floating-window":
+            var x: SizeChange?, y: SizeChange?
+            var args = rest[...]
+            while let axis = args.popFirst() {
+                // The value is taken as is, so -x -10 moves left.
+                guard let value = args.popFirst().flatMap(SizeChange.init) else { return nil }
+                switch axis {
+                case "-x": x = value
+                case "-y": y = value
+                default: return nil
+                }
+            }
+            guard x != nil || y != nil else { return nil }
+            self = .moveFloatingWindow(x: x, y: y)
             return
         case "next-window", "previous-window":
             guard rest.isEmpty || rest == ["same-app"] else { return nil }

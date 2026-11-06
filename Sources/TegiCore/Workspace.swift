@@ -6,6 +6,10 @@ public struct Workspace: Equatable {
     public var name: String?
     public var columns: [Column] = []
     public var active = 0
+    /// Bottom to top: the top one is the floating layer's active window.
+    public var floaters: [Floater] = []
+    /// Focus is in the floating layer rather than the strip.
+    var floatingActive = false
     public var viewOffset: Double = 0
     var returnOffset: Double?
 
@@ -14,8 +18,11 @@ public struct Workspace: Equatable {
         self.home = home
     }
 
-    public var isEmpty: Bool { columns.isEmpty }
+    public var isEmpty: Bool { columns.isEmpty && floaters.isEmpty }
     public var activeWindow: WindowID? { columns.indices.contains(active) ? columns[active].activeWindow : nil }
+    /// Focus is on a floating window: it was put there, or the strip has nothing to offer.
+    public var floatingFocused: Bool { !floaters.isEmpty && (floatingActive || columns.isEmpty) }
+    public var focusedWindow: WindowID? { floatingFocused ? floaters.last?.id : activeWindow }
 
     func column(of id: WindowID) -> (column: Int, tile: Int)? {
         for (c, col) in columns.enumerated() {

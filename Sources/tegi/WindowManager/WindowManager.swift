@@ -17,8 +17,6 @@ final class Win {
     var fullScreen: Bool
     /// Where it goes back to when it leaves full screen: the workspace it was in, and its column there.
     var fullScreenHome: (workspace: Int, column: Int)?
-    var floatHome: Int?
-    var floatFrame: CGRect?
     var nativeRadius: Double?
 
     init(id: WindowID, element: AXUIElement, worker: AppWorker, info: WindowInfo, floating: Bool) {
@@ -33,7 +31,6 @@ final class Win {
         self.floating = floating
         suspended = info.minimized
         fullScreen = info.fullscreen
-        floatFrame = info.frame
     }
 }
 
@@ -65,7 +62,6 @@ final class WindowManager {
     var hideWhenLanded: Set<UInt32> = []
     var sceneFinishes: [UInt32: Int] = [:]
     var verified: Set<WindowID> = []
-    var floatHidden: Set<WindowID> = []
     var focused: WindowID? {
         // A window's picture is freshest as you leave it, which beats capturing it every second while you work in it.
         // It's taken once things are still: a capture while apps trade focus can stall the window server for half a second.
@@ -217,15 +213,13 @@ final class WindowManager {
         guard !paused || command == .quit else { return }
         let start = CFAbsoluteTimeGetCurrent()
         if recent.isOpen && recent.handle(command, binds: config.binds) { return }
-        if let id = focused, let win = wins[id], win.floating, runFloating(command, win) { return }
         switch command {
         case .toggleWindowFloating: return toggleFloating()
         case .moveWindowToFloating: return setFocusedFloating(true)
         case .moveWindowToTiling: return setFocusedFloating(false)
-        case .focusFloating: return focusFloating()
-        case .focusTiling: return focusModel()
-        case .switchFocusBetweenFloatingAndTiling:
-            return focused.flatMap { wins[$0] }?.floating == true ? focusModel() : focusFloating()
+        case .focusFloating: return focusLayer(floating: true)
+        case .focusTiling: return focusLayer(floating: false)
+        case .switchFocusBetweenFloatingAndTiling: return focusLayer(floating: nil)
         case .focusWindowPrevious:
             if let id = recent.previous(than: focused, among: Set(wins.keys)) { focusWindow(id) }
             return
@@ -244,6 +238,11 @@ final class WindowManager {
         case .spawnSh(let line): return spawn(["/bin/sh", "-c", line])
         case .quit: return onQuit()
         default: break
+        }
+        // A tiled window floats first, as in niri.
+        if case .moveFloatingWindow = command, let id = focused, let win = wins[id], !win.floating, !win.suspended {
+            setFloating(win, true)
+            world.focus(id, config: config)
         }
         let before = world.focusedWindow
         world.perform(command, config: config)
@@ -312,7 +311,6 @@ final class WindowManager {
         } else {
             paused = false
             applied = [:]
-            floatHidden = []
             relayout()
         }
         if input != nil { startInput() }
@@ -327,15 +325,13 @@ final class WindowManager {
         overview = false
         var restored: [WindowID: CGRect] = [:]
         var cascade = 0
-        let hidden = layout().filter { !$0.value.visible }.map(\.key) + Array(floatHidden)
-        for id in hidden.sorted() {
-            guard let win = wins[id] else { continue }
-            let m = world.locate(id)?.monitor ?? floatMonitor(win) ?? 0
-            guard world.monitors.indices.contains(m) else { continue }
-            let area = world.monitors[m].area
+        let hidden = layout().filter { !$0.value.visible }
+        for (id, p) in hidden.sorted(by: { $0.key < $1.key }) {
+            guard let win = wins[id], world.monitors.indices.contains(p.monitor) else { continue }
+            let area = world.monitors[p.monitor].area
             let size = applied[id]?.size ?? win.original?.size ?? CGSize(width: 800, height: 600)
             var frame: CGRect
-            if win.floating, let f = win.floatFrame {
+            if let f = world.floatingFrame(id) {
                 frame = f
             } else if let o = win.original, area.intersection(o).width * area.intersection(o).height > o.width * o.height / 2 {
                 frame = o
@@ -360,7 +356,6 @@ final class WindowManager {
         defer {
             if !sentSomething && !motion.isMoving { pressed = nil }
         }
-        world.pinned = Set(wins.values.compactMap { $0.floating && !$0.suspended ? $0.floatHome : nil })
         let placements = layout()
         let now = max(CACurrentMediaTime(), motion.clock)
         let animate = !direct && config.animations.on && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
@@ -368,12 +363,15 @@ final class WindowManager {
         let views = world.monitors.indices.map { world.viewPosition(monitor: $0, config: config) }
         mode.sync()
         let wereHomes = homes
-        homes = Dictionary(world.monitors.flatMap { $0.workspaces.flatMap { ws in ws.columns.flatMap { $0.tiles.map { ($0.id, ws.id) } } } },
-                           uniquingKeysWith: { a, _ in a })
+        homes = Dictionary(world.monitors.flatMap { $0.workspaces.flatMap { ws in
+            ws.columns.flatMap { $0.tiles.map { ($0.id, ws.id) } } + ws.floaters.map { ($0.id, ws.id) }
+        } }, uniquingKeysWith: { a, _ in a })
         defer { lastViews = views }
         motion.batch {
             for (id, p) in placements {
                 guard let win = wins[id], !win.fullScreen, !nativeMoving.contains(id), grab?.window != id || grab?.resize == true else { continue }
+                // An app places its own menus and popovers: tegi only hides them with their workspace and shows them again.
+                if win.popup, targets[id].map({ $0.visible == p.visible }) ?? p.visible { continue }
                 // A window changing workspace rides the workspace slide's picture, which hides as soon as the slide lands;
                 // flying it across the strip underneath would show it still on its way.
                 let changedWorkspace = wereHomes[id].map { $0 != homes[id] } ?? false
@@ -401,7 +399,6 @@ final class WindowManager {
             motion.forget { placements[$0] == nil }
         }
         watchWindowOrder()
-        placeFloating()
         if motion.isMoving {
             // Prime the next real display frame. Input bursts must not advance the clock by a frame per event.
             let nextFrame = CACurrentMediaTime() + 1 / Double(NSScreen.main?.maximumFramesPerSecond ?? 60)
@@ -488,7 +485,6 @@ final class WindowManager {
     func cornerRadius(_ id: WindowID) -> Double { config.windowCornerRadius ?? wins[id]?.nativeRadius ?? snapshots.radii[id] ?? 16 }
 
     func updateRing(at now: CFTimeInterval) {
-        let floatingFocused = focused.flatMap { wins[$0] }?.floating == true
         var tabs: [FocusRing.Tabs] = []
         let rings = world.monitors.enumerated().map { m, mon -> FocusRing.Target in
             let ws = mon.workspaces[mon.active]
@@ -499,7 +495,7 @@ final class WindowManager {
             }
             var frame: CGRect?
             if let id = ws.activeWindow, !ws.columns[ws.active].fullscreen, wins[id]?.fullScreen != true,
-               !(m == world.focusedMonitor && floatingFocused) {
+               !(m == world.focusedMonitor && ws.floatingFocused) {
                 frame = shown(id)
                 // Pictured off screen, a window may not be fully drawn: its corners are measured again the first time
                 // it has the ring on screen.
@@ -573,11 +569,16 @@ final class WindowManager {
         worker.watch(el)
         // Standard previews need a picture; live previews only need one if native corner geometry is unavailable.
         refreshSnapshots([id])
+        guard !win.suspended else { return }
         if win.floating {
-            win.floatHome = floatTarget(rule)
+            world.addFloating(id, frame: info.frame, rule: rule, config: config)
+            // It's already where its app put it: sending that back could undo where the app moves it next.
+            if let frame = info.frame {
+                applied[id] = frame
+                verified.insert(id)
+            }
             return
         }
-        guard !win.suspended else { return }
         if initial {
             world.adopt(id, monitor: monitor(containing: info.frame), config: config)
         } else {
@@ -599,13 +600,12 @@ final class WindowManager {
         drift[id] = nil
         strays.removeValue(forKey: id)?.cancel()
         verified.remove(id)
-        floatHidden.remove(id)
         leftBehind.remove(id)
         generation[id] = nil
         unlanded.remove(id)
         dragged[id] = nil
         nativeMoving.remove(id)
-        world.remove(id, config: config)
+        world.remove(id, forever: true, config: config)
         if focused == id { focused = nil }
         recent.forget(id)
         snapshots.forget(id)
@@ -662,7 +662,7 @@ final class WindowManager {
         if resized, NSEvent.pressedMouseButtons & 1 == 0 { sizeChanged(id) }
         guard mode.heard(id) else { return }
         let mouseDown = mode.pressed(id)
-        if win.floating { return floatingMoved(win) }
+        if win.floating { return floatingMoved(win, mouseDown: mouseDown) }
         guard grab?.window != id else { return }
         // tegi's own moves echo back every frame; reading each one would double the traffic to the app mid-motion.
         if !mouseDown, motion.isFlying(id) || unlanded.contains(id) { return putBack(id, worker: worker, el: el) }
@@ -753,11 +753,11 @@ final class WindowManager {
         guard win.suspended != suspended else { return }
         win.suspended = suspended
         applied[win.id] = nil
-        if suspended { letGo(win.id) }
-        if win.floating {
-            floatHidden.remove(win.id)
-        } else if suspended {
+        if suspended {
+            letGo(win.id)
             world.remove(win.id, config: config)
+        } else if win.floating {
+            world.addFloating(win.id, frame: win.original, rule: rule(win), config: config)
         } else {
             world.insert(win.id, rule: rule(win), config: config)
         }
@@ -788,26 +788,13 @@ final class WindowManager {
         focused = id
         recent.focused(id)
         guard let win = wins[id] else { return }
-        if win.floating, let home = win.floatHome, let (m, w) = world.find(workspace: home), world.monitors[m].active != w {
-            world.showWorkspace(monitor: m, index: w)
-        } else if !win.floating && !win.suspended && world.focusedWindow != id {
-            world.focus(id, config: config)
-        }
+        if !win.suspended && world.focusedWindow != id { world.focus(id, config: config) }
         relayout()
         if !win.floating { restack() }
     }
 
     func focusWindow(_ id: WindowID) {
-        guard let win = wins[id] else { return }
-        if win.floating {
-            if let home = win.floatHome, let (m, w) = world.find(workspace: home) { world.showWorkspace(monitor: m, index: w) }
-            focused = id
-            expectFocus(id)
-            recent.focused(id)
-            relayout()
-            win.worker.focus(win.element)
-            return
-        }
+        guard wins[id] != nil else { return }
         world.focus(id, config: config)
         relayout()
         focusModel()
@@ -815,7 +802,6 @@ final class WindowManager {
 
     func focusModel(layout: Bool = true) {
         guard let id = world.focusedWindow, let win = wins[id] else {
-            if let floater = floatersShowing(on: world.focusedMonitor).first { return focusWindow(floater) }
             focused = nil
             expectFocus(nil)
             // tegi's own main thread answers this, so it can't be asked from there.
@@ -842,7 +828,7 @@ final class WindowManager {
         win.worker.focus(win.element) { [weak self] in
             guard let self else { return }
             activating = nil
-            if let id = focused, id != win.id, let next = wins[id], !next.floating { activate(next) }
+            if let id = focused, id != win.id, let next = wins[id] { activate(next) }
         }
     }
 
@@ -873,9 +859,6 @@ final class WindowManager {
             if let p = placements[id] {
                 out["frame"] = [p.frame.minX, p.frame.minY, p.frame.width, p.frame.height]
                 out["visible"] = p.visible
-            } else if let f = win.floatFrame {
-                out["frame"] = [f.minX, f.minY, f.width, f.height]
-                out["visible"] = !floatHidden.contains(id)
             }
             if let presentation = windowServer.presentation(of: win.windowID) {
                 let f = presentation.frame
@@ -885,7 +868,7 @@ final class WindowManager {
             } else if win.windowID != 0, let f = onScreen(win.windowID) {
                 out["presented_frame"] = [f.minX, f.minY, f.width, f.height]
             }
-            if let home = win.floatHome { out["workspace_id"] = home }
+            if let (m, w, _) = world.locateFloater(id) { out["workspace_id"] = world.monitors[m].workspaces[w].id }
             if let limit = world.heightLimit(for: id) {
                 out["height_constraint"] = ["width": limit.width, "minimum": limit.height]
             }
@@ -913,7 +896,8 @@ final class WindowManager {
                     "focus_frame": ring.frame(on: mon.id).map { [$0.minX, $0.minY, $0.width, $0.height] } ?? NSNull(),
                     "workspaces": mon.workspaces.map { ws in
                         ["id": ws.id, "name": ws.name ?? NSNull(), "active_column": ws.active,
-                         "columns": ws.columns.map { $0.windows.map(window) }] as [String: Any]
+                         "columns": ws.columns.map { $0.windows.map(window) }, "floating": ws.floaters.map { window($0.id) },
+                         "floating_focused": ws.floatingFocused] as [String: Any]
                     },
                 ] as [String: Any]
             },

@@ -60,6 +60,7 @@ public struct WindowRule: Equatable {
     public var focused: Bool?
     public var workspace: String?
     public var display: String?
+    public var position: FloatingPosition?
 
     public init() {}
 
@@ -79,6 +80,7 @@ public struct WindowRule: Equatable {
         focused = o.focused ?? focused
         workspace = o.workspace ?? workspace
         display = o.display ?? display
+        position = o.position ?? position
     }
 }
 
@@ -488,6 +490,13 @@ public struct Config: Equatable {
                     case "width": rule.width = try fraction(try value(word))
                     case "workspace": rule.workspace = try value(word)
                     case "display": rule.display = try value(word)
+                    case "position":
+                        guard let x = Double(try value(word)), let y = Double(try value(word)) else {
+                            throw fail("write position <x> <y>, optionally followed by a corner or side such as bottom-right")
+                        }
+                        let anchor = rest.first.flatMap(FloatingPosition.Anchor.init(rawValue:))
+                        if anchor != nil { rest.removeFirst() }
+                        rule.position = FloatingPosition(x: x, y: y, anchor: anchor ?? .topLeft)
                     default: throw fail("unknown rule option \(word)")
                     }
                 }
@@ -672,12 +681,13 @@ public struct Config: Equatable {
 
     # How windows open. rule <bundle-id or *> [title <regex>], then any of:
     # float, tile, width <fraction>, maximized, focused, unfocused,
-    # workspace <name>, display <name>. Every matching rule applies, in order.
+    # workspace <name>, display <name>, and position <x> <y> [corner or side]
+    # for where it first floats. Every matching rule applies, in order.
     # Find an app's bundle id with:  osascript -e 'id of app "Calculator"'
     #   rule com.apple.calculator float
     #   rule com.apple.finder width 0.33333 unfocused
     #   rule com.tinyspeck.slackmacgap workspace chat
-    #   rule * title ^Picture-in-Picture$ float
+    #   rule * title ^Picture-in-Picture$ float position 32 32 bottom-right
 
     # Programs to start with tegi.
     #   spawn-at-startup open -a Ghostty

@@ -26,7 +26,7 @@ Apple silicon, macOS 14 or later.
 
 - **niri's names:** `center-focused-column`, `preset-column-widths`, `focus-column-left`, `move-column-to-workspace-down` and the rest, one setting per line in `~/.config/tegi/config`. Saved changes apply live.
 - **Settings window:** every option, writing that same file.
-- **Rules:** per app or title, float or tile, width, workspace, display, focus.
+- **Rules:** per app or title, float or tile, where it first floats, width, workspace, display, focus.
 - **Stubborn apps:** a window an app moves on its own goes back in its column. Stacks reserve each window's accepted minimum height; if they cannot fit, moving focus brings that window into view. `reset-window-height` clears the learned height limit.
 - **Scripting:** `tegi msg action <command>`, `tegi msg state`, `tegi msg event-stream`. State includes requested and displayed frames in both motion modes.
 

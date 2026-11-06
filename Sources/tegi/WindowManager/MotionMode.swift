@@ -27,8 +27,6 @@ protocol MotionMode: AnyObject {
     func rest(_ id: WindowID, _ p: Placement) -> CGRect
     func step(_ id: WindowID, _ frame: CGRect, monitor: Int, last: Bool)
     func send(_ id: WindowID, _ frame: CGRect, verify: Bool)
-    /// Where a hidden floating window waits.
-    func hide(_ win: Win, size: CGSize, on monitor: Int) -> CGRect
     /// Accessibility heard where tegi last sent a window.
     func landed(_ id: WindowID)
     /// Hands windows back to native geometry, at `restored` where given.

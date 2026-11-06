@@ -89,6 +89,7 @@ extension WindowManager {
         case .grab(let right, let point): beginGrab(at: point, resize: right)
         case .drag(let point): moveGrab(to: point)
         case .release: endGrab()
+        case .switchLayer: switchGrabbedLayer()
         }
     }
 
@@ -285,8 +286,8 @@ extension WindowManager {
     }
 
     func window(at point: CGPoint) -> WindowID? {
-        let floating = floatersShowingEverywhere().first { id in
-            (applied[id] ?? wins[id]?.floatFrame)?.contains(point) == true
+        let floating = floatersShowing().first { id in
+            (applied[id] ?? targets[id]?.frame)?.contains(point) == true
         }
         if let floating { return floating }
         let now = CACurrentMediaTime()
@@ -295,7 +296,7 @@ extension WindowManager {
 
     func beginGrab(at point: CGPoint, resize: Bool) {
         guard !paused, !overview, let id = window(at: point), let win = wins[id] else { return }
-        let frame = win.floating ? (win.floatFrame ?? applied[id] ?? .zero) : (applied[id] ?? .zero)
+        let frame = applied[id] ?? targets[id]?.frame ?? .zero
         if !win.floating {
             world.focus(id, config: config)
             motion.stop(id, at: nil)
@@ -311,7 +312,7 @@ extension WindowManager {
         if g.resize {
             if g.floating {
                 g.current = CGRect(x: g.frame.minX, y: g.frame.minY, width: max(100, g.frame.width + dx), height: max(60, g.frame.height + dy))
-                win.floatFrame = g.current
+                world.setFloatingFrame(g.window, g.current)
                 send(g.window, g.current)
             } else {
                 world.perform(.setColumnWidth(.setFixed(max(100, g.frame.width + dx))), config: config)
@@ -325,9 +326,7 @@ extension WindowManager {
             send(id: g.window, g.current, verify: false)
             grab = g
             updateRing(at: CACurrentMediaTime())
-            if g.floating {
-                win.floatFrame = g.current
-            } else if let m = world.monitors.firstIndex(where: { $0.screen.contains(point) }) {
+            if !g.floating, let m = world.monitors.firstIndex(where: { $0.screen.contains(point) }) {
                 let area = world.monitors[m].area
                 let local = CGPoint(x: point.x - area.minX, y: point.y - area.minY)
                 let hint = insertHint(monitor: m, workspace: world.monitors[m].active, at: local)
@@ -370,6 +369,24 @@ extension WindowManager {
         relayout(direct: true)
     }
 
+    /// A right click while moving a window takes it between the strip and the floating layer, as in niri; the drag goes on.
+    func switchGrabbedLayer() {
+        guard var g = grab, !g.resize, let win = wins[g.window], !win.suspended, !win.fullScreen, !g.floating || !win.popup else { return }
+        setFloating(win, !g.floating)
+        g.floating = win.floating
+        if g.floating {
+            world.setFloatingFrame(g.window, g.current)
+            ring.showHint(nil, below: 0)
+            edgeTimer?.invalidate()
+            edgeTimer = nil
+            g.edge = nil
+        }
+        grab = g
+        world.focus(g.window, config: config)
+        relayout()
+        moveGrab(to: g.point)
+    }
+
     func endGrab() {
         guard let g = grab else { return }
         grab = nil
@@ -377,12 +394,8 @@ extension WindowManager {
         edgeTimer = nil
         ring.showHint(nil, below: 0)
         if g.floating {
-            if let win = wins[g.window] {
-                win.floatFrame = g.current
-                if let m = monitor(containing: g.current), let home = activeWorkspaceID(on: m) { win.floatHome = home }
-            }
-            send(g.window, g.current)
-            return
+            adoptFloatingFrame(g.window, g.current)
+            return relayout()
         }
         if g.resize { return relayout() }
         let p = g.point
@@ -400,7 +413,12 @@ extension WindowManager {
         guard !dragged.isEmpty || !nativeMoving.isEmpty else { return }
         nativeMoving = []
         for (id, frame) in dragged {
-            guard let win = wins[id], !win.floating, !win.suspended, let loc = world.locate(id) else { continue }
+            guard let win = wins[id], !win.suspended else { continue }
+            if win.floating {
+                adoptFloatingFrame(id, frame)
+                continue
+            }
+            guard let loc = world.locate(id) else { continue }
             if resizedByUser.contains(id) {
                 world.adoptWidth(frame.width, for: id, config: config)
             } else if let m = monitor(containing: frame), m != loc.monitor {
@@ -445,7 +463,7 @@ extension WindowManager {
     }
 
     func warpPointer(to id: WindowID) {
-        guard config.warpMouseToFocus, grab == nil, let frame = targets[id]?.frame ?? wins[id]?.floatFrame else { return }
+        guard config.warpMouseToFocus, grab == nil, let frame = targets[id]?.frame else { return }
         let p = pointer()
         guard !frame.contains(p) else { return }
         let inner = frame.insetBy(dx: min(8, frame.width / 2), dy: min(8, frame.height / 2))

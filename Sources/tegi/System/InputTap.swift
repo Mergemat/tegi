@@ -18,6 +18,8 @@ final class InputTap {
         case grab(right: Bool, point: CGPoint)
         case drag(point: CGPoint)
         case release(point: CGPoint)
+        /// A right click while a window is being moved.
+        case switchLayer
     }
 
     private let modifier: CGEventFlags
@@ -30,6 +32,7 @@ final class InputTap {
     private var loop: CFRunLoop?
     private var scrolling = ScrollInput()
     private var grabbing = false
+    private var grabbedWithRight = false
 
     init?(modifier: Mods, trace: InputTrace, scrolling: ScrollInput, scrollRouting: @escaping () -> TouchGestures.ScrollRouting,
           blockTouches: @escaping (Bool) -> Void, handler: @escaping (Event) -> Void) {
@@ -99,9 +102,14 @@ final class InputTap {
         let held = !modifier.isEmpty && event.flags.intersection([.maskAlternate, .maskControl, .maskCommand, .maskShift]) == modifier
         switch type {
         case .leftMouseDown, .rightMouseDown:
+            if grabbing && !grabbedWithRight && type == .rightMouseDown {
+                send(.switchLayer)
+                return nil
+            }
             guard held else { return Unmanaged.passUnretained(event) }
             grabbing = true
-            send(.grab(right: type == .rightMouseDown, point: event.location))
+            grabbedWithRight = type == .rightMouseDown
+            send(.grab(right: grabbedWithRight, point: event.location))
             return nil
         case .leftMouseDragged, .rightMouseDragged:
             guard grabbing else { return Unmanaged.passUnretained(event) }
@@ -109,6 +117,8 @@ final class InputTap {
             return nil
         case .leftMouseUp, .rightMouseUp:
             guard grabbing else { return Unmanaged.passUnretained(event) }
+            // Only the button that started the grab ends it; the other one's click switched layers.
+            guard (type == .rightMouseUp) == grabbedWithRight else { return nil }
             grabbing = false
             send(.release(point: event.location))
             return nil

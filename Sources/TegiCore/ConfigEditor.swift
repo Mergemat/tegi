@@ -129,6 +129,8 @@ extension Command {
         case .moveWorkspaceToMonitor(let d): return ["move-workspace-to-monitor-" + d.rawValue]
         case .setColumnWidth(let c): return ["set-column-width", c.text]
         case .setWindowHeight(let c): return ["set-window-height", c.text]
+        case .moveFloatingWindow(let x, let y):
+            return ["move-floating-window"] + (x.map { ["-x", $0.text] } ?? []) + (y.map { ["-y", $0.text] } ?? [])
         case .setColumnDisplay(let tabbed): return ["set-column-display", tabbed ? "tabbed" : "normal"]
         case .nextWindow(let same): return ["next-window"] + (same ? ["same-app"] : [])
         case .previousWindow(let same): return ["previous-window"] + (same ? ["same-app"] : [])
@@ -150,6 +152,10 @@ extension WindowRule {
         if let focused { w.append(focused ? "focused" : "unfocused") }
         if let workspace { w += ["workspace", workspace] }
         if let display { w += ["display", display] }
+        if let position {
+            w += ["position", String(format: "%g", position.x), String(format: "%g", position.y)]
+            if position.anchor != .topLeft { w.append(position.anchor.rawValue) }
+        }
         return w
     }
 }

@@ -98,7 +98,7 @@ final class DirectMotion: MotionMode {
         let clip = clip(id)
         if before?.size != frame.size { wm.verified.remove(id) }
         wm.applied[id] = frame
-        wm.updateLiveFloating(win)
+        wm.updateLiveFloating(win, frame)
         compositor.place(id, frame: frame, clip: clip)
         wm.sentSomething = true
         if before != frame { unsynced.insert(id) }
@@ -110,10 +110,6 @@ final class DirectMotion: MotionMode {
         } else if before?.size != frame.size {
             requestSize(id, frame)
         }
-    }
-
-    func hide(_ win: Win, size: CGSize, on monitor: Int) -> CGRect {
-        win.floatFrame ?? CGRect(origin: wm.world.monitors[monitor].area.origin, size: size)
     }
 
     func landed(_ id: WindowID) { unsynced.remove(id) }
@@ -184,7 +180,7 @@ final class DirectMotion: MotionMode {
     }
 
     func clip(_ id: WindowID) -> CGRect {
-        let monitor = wm.world.locate(id)?.monitor ?? wm.wins[id].flatMap(wm.floatMonitor)
+        let monitor = wm.world.locate(id)?.monitor ?? wm.world.locateFloater(id)?.monitor
         if let monitor, wm.world.monitors.indices.contains(monitor),
            let scene = wm.scenes[wm.world.monitors[monitor].id], scene.isVisible, !scene.inOverview, !scene.isSettled,
            let win = wm.wins[id], let clip = server.presentation(of: win.windowID)?.clip, !clip.isEmpty {
@@ -192,10 +188,8 @@ final class DirectMotion: MotionMode {
             // preview now, so their apps can lay out and render before the slide finishes.
             return clip
         }
-        if let win = wm.wins[id], win.floating {
-            guard let m = wm.floatMonitor(win), wm.world.monitors.indices.contains(m),
-                  win.floatHome == wm.activeWorkspaceID(on: m) else { return .zero }
-            return wm.world.monitors[m].screen
+        if let (m, w, _) = wm.world.locateFloater(id) {
+            return w == wm.world.monitors[m].active ? wm.world.monitors[m].screen : .zero
         }
         guard let location = wm.world.locate(id), wm.world.monitors.indices.contains(location.monitor) else { return .zero }
         let mon = wm.world.monitors[location.monitor]
@@ -209,7 +203,7 @@ final class DirectMotion: MotionMode {
         guard let win = wm.wins[id], !win.popup else { return }
         let size = frame.size
         var content = frame
-        if let m = wm.world.locate(id)?.monitor ?? wm.floatMonitor(win), wm.world.monitors.indices.contains(m) {
+        if let m = wm.world.locate(id)?.monitor ?? wm.world.locateFloater(id)?.monitor, wm.world.monitors.indices.contains(m) {
             let mon = wm.world.monitors[m]
             if !mon.screen.contains(content) { content.origin = mon.area.origin }
         }

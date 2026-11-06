@@ -29,15 +29,13 @@ extension WindowManager {
             // Each capture costs the window server about the same whatever its size, so they're kept few:
             // windows are also captured as focus leaves them, and the overview recaptures what it shows.
             if freshTicks % 60 == 0 {
-                refreshSnapshots(targets.filter(\.value.visible).map(\.key) + floatersShowingEverywhere())
+                refreshSnapshots(targets.filter(\.value.visible).map(\.key))
             } else if freshTicks % 10 == 0, let id = focused {
                 refreshSnapshots([id])
             }
             if freshTicks % 40 == 0 { refreshWallpapers() }
         }
     }
-
-    func floatersShowingEverywhere() -> [WindowID] { world.monitors.indices.flatMap { floatersShowing(on: $0) } }
 
     func followWorkspaces(animate: Bool) {
         defer { slideVelocity = nil }
@@ -101,8 +99,6 @@ extension WindowManager {
             }
             if let picked {
                 focusWindow(picked)
-            } else if let id = focused, floatersShowing(on: world.focusedMonitor).contains(id) {
-                focusWindow(id)
             } else {
                 focusModel()
             }
@@ -135,7 +131,7 @@ extension WindowManager {
         }
         scene.onPick = { [weak self] id in
             guard let self else { return }
-            if wins[id]?.floating != true { world.focus(id, config: config) }
+            world.focus(id, config: config)
             setOverview(false, focusing: id)
         }
         scene.onPickWorkspace = { [weak self] w in
@@ -175,7 +171,6 @@ extension WindowManager {
             }
             let m = world.monitors.firstIndex { $0.id == display }
             let waiting = targets.contains { id, p in p.visible && p.monitor == m && unlanded.contains(id) }
-                || floatersShowing(on: m ?? -1).contains { unlanded.contains($0) }
             guard force || !waiting else { continue }
             hideWhenLanded.remove(display)
             scene.hide()
@@ -189,12 +184,10 @@ extension WindowManager {
 
     func sceneContent(_ m: Int, current: Bool = false) -> Scene.Content {
         let mon = world.monitors[m]
-        let floatingFocused = m == world.focusedMonitor && focused.flatMap { wins[$0] }?.floating == true
+        let floatingFocused = m == world.focusedMonitor && mon.workspaces[mon.active].floatingFocused
         let ring = floatingFocused ? nil : m == world.focusedMonitor ? config.focusRingColor : config.focusRingInactiveColor
         // Floating windows can sit above or below tiled ones; macOS decides, so the picture asks it.
-        let homes = Set(mon.workspaces.map(\.id))
-        let floaters = wins.values.filter { $0.floating && !$0.suspended && $0.floatHome.map(homes.contains) == true }
-        let stack = floaters.isEmpty ? [:] : stackOrder()
+        let stack = mon.workspaces.allSatisfy(\.floaters.isEmpty) ? [:] : stackOrder()
         func depth(_ id: WindowID) -> CGFloat { wins[id].flatMap { stack[$0.windowID] } ?? 0 }
         return mon.workspaces.indices.map { w in
             let ws = mon.workspaces[w]
@@ -219,9 +212,9 @@ extension WindowManager {
                              depth: depth(f.id), image: snapshots.images[f.id], icon: wins[f.id]?.worker.icon,
                              liveWindow: mode.liveScenes ? wins[f.id]?.windowID : nil)
             }
-            let id = mon.workspaces[w].id
-            for win in wins.values where win.floating && !win.suspended && win.floatHome == id && !snapshots.blank.contains(win.id) {
-                guard var f = win.floatFrame else { continue }
+            for floater in ws.floaters {
+                guard let win = wins[floater.id], !snapshots.blank.contains(win.id) else { continue }
+                var f = floater.frame(in: mon.area)
                 if let presented = mode.presented(win.id) {
                     if current, w == mon.active { f = presented } else { f.size = presented.size }
                 }
@@ -270,12 +263,7 @@ extension WindowManager {
     func dropInOverview(_ id: WindowID, monitor m: Int, workspace w: Int, at point: CGPoint) {
         guard let win = wins[id] else { return }
         if win.floating {
-            let area = world.monitors[m].area
-            if let f = win.floatFrame {
-                win.floatFrame = CGRect(x: area.minX + point.x - f.width / 2, y: area.minY + point.y - 20, width: f.width, height: f.height)
-            }
-            win.floatHome = world.monitors[m].workspaces[w].id
-            floatHidden.insert(id)
+            world.dropFloating(id, monitor: m, workspace: w, at: point)
         } else {
             let position = world.insertPosition(monitor: m, workspace: w, at: point, config: config)
             world.move(id, to: m, workspace: w, at: position, config: config)
@@ -316,7 +304,7 @@ extension WindowManager {
         warmup?.cancel()
         let work = DispatchWorkItem { [weak self] in
             guard let self, !motion.isMoving, snapshots.allowed else { return }
-            refreshSnapshots(Array(Set(targets.filter(\.value.visible).map(\.key) + floatersShowingEverywhere()).union(leftBehind)))
+            refreshSnapshots(Array(Set(targets.filter(\.value.visible).map(\.key)).union(leftBehind)))
             leftBehind = []
         }
         warmup = work

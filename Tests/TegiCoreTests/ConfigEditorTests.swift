@@ -78,7 +78,8 @@ private func parsed(_ text: String) -> Config { try! Config.parse(text) }
     var commands = Array(Command.simple.values) + Config.builtIn.binds.values
     commands += [.focusWorkspace(.name("chat")), .setColumnWidth(.setFixed(800)), .setWindowHeight(.adjustProportion(-0.1)),
                  .focusMonitor(.left), .moveWorkspaceToIndex(2), .setColumnDisplay(tabbed: true), .spawnSh("echo hi"),
-                 .previousWindow(sameApp: true), .focusWindowInColumn(3)]
+                 .previousWindow(sameApp: true), .focusWindowInColumn(3),
+                 .moveFloatingWindow(x: .adjustFixed(-10), y: .setProportion(0.5)), .moveFloatingWindow(x: nil, y: .setFixed(200))]
     for command in commands { #expect(Command(command.words) == command, "\(command)") }
 }
 
@@ -91,7 +92,8 @@ private func parsed(_ text: String) -> Config { try! Config.parse(text) }
 
 @Test func rulesAndWorkspacesWriteBackAsWhatTheyRead() throws {
     let text = """
-    rule com.apple.calculator float
+    rule com.apple.calculator float position 32 40 bottom-right
+    rule com.apple.Notes float position -5 10
     rule * title ^Picture-in-Picture$ tile width 0.4 maximized unfocused workspace chat display LG
     workspace chat
     workspace code display LG

@@ -49,10 +49,6 @@ final class StandardMotion: MotionMode {
         wm.sendAccessibility(id, frame, verify: verify)
     }
 
-    func hide(_ win: Win, size: CGSize, on monitor: Int) -> CGRect {
-        wm.world.place(CGRect(origin: CGPoint(x: -1_000_000, y: 0), size: size), on: monitor).frame
-    }
-
     func landed(_ id: WindowID) {}
 
     func finish(restoring restored: [WindowID: CGRect]) { wm.handBack(restored) }

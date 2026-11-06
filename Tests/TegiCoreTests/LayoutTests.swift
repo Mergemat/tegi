@@ -415,12 +415,12 @@ private struct SplitMix {
 @Test func aWorkspaceHoldingOnlyFloatingWindowsIsKept() {
     let c = config()
     var w = world([1], config: c)
-    w.perform(.moveColumnToWorkspaceDown, config: c)
+    w.float(1, config: c)
     let first = w.monitors[0].workspaces[0].id
-    w.pinned = [first]
-    w.perform(.focusWorkspaceUp, config: c)
+    w.perform(.focusWorkspaceDown, config: c)
     w.perform(.focusWorkspaceDown, config: c)
     #expect(w.find(workspace: first) != nil)
+    #expect(!w.visible(1, c))
 }
 
 @Test func namedWorkspacesStayAndCanBeReachedByName() {

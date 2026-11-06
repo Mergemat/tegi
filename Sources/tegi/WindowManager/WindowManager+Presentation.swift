@@ -37,9 +37,8 @@ extension WindowManager {
         if open { setOverview(true) }
     }
 
-    func updateLiveFloating(_ win: Win) {
-        guard mode.liveScenes, win.floating, let frame = win.floatFrame,
-              let monitor = floatMonitor(win), world.monitors.indices.contains(monitor) else { return }
+    func updateLiveFloating(_ win: Win, _ frame: CGRect) {
+        guard mode.liveScenes, win.floating, let monitor = world.locateFloater(win.id)?.monitor else { return }
         let mon = world.monitors[monitor]
         guard scenes[mon.id]?.isVisible == true else { return }
         scenes[mon.id]?.setFrames([win.id: frame.offsetBy(dx: -mon.area.minX, dy: -mon.area.minY)])
