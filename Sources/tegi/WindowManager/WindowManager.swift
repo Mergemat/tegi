@@ -160,6 +160,11 @@ final class WindowManager {
                       let worker = self?.workers[app.processIdentifier] else { return }
                 worker.focusedWindow { el in if let el { self?.focusChanged(el, worker) } }
             },
+            // Trackpads come back from sleep as new MultitouchSupport devices, and the old ones go silent.
+            // They take about a second to settle, as Karabiner-Elements and MiddleClick also wait.
+            center.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1) { self?.startInput() }
+            },
             NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
                 self?.displaysChanged()
             },
